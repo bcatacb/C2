@@ -1,0 +1,27 @@
+{
+  "name": "unified-inbox-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.106.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "playwright": "^1.60.0",
+    "uuid": "^14.0.0",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.1",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}

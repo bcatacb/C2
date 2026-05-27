@@ -1,0 +1,342 @@
+# TokTik C2 — Setup & Installation Guide
+
+## Prerequisites
+
+- **Node.js** v20 or newer — https://nodejs.org
+- **Supabase account** (free tier works) — https://supabase.com
+- **Proxies** (optional for testing, required for production) — residential or mobile proxies recommended
+
+---
+
+## Step 1: Create the Database
+
+1. Go to https://supabase.com and sign in
+2. Click **New Project** — name it `toktik-c2`, set a database password, pick a region
+3. Wait for provisioning (~2 minutes)
+4. Go to **SQL Editor** in the left sidebar
+5. Click **New Query**, paste the first migration below, and click **Run**:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE proxies (
+  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id             uuid,
+  type                text CHECK (type IN ('residential', 'mobile', 'datacenter')),
+  host                text NOT NULL,
+  port                int NOT NULL,
+  username            text,
+  password            text,
+  country             text,
+  assigned_account_id uuid,
+  status              text DEFAULT 'active' CHECK (status IN ('active', 'dead', 'rotating')),
+  last_checked        timestamptz,
+  created_at          timestamptz DEFAULT now()
+);
+
+CREATE TABLE tiktok_accounts (
+  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id             uuid,
+  username            text NOT NULL,
+  display_name        text,
+  profile_photo       text,
+  transport_type      text DEFAULT 'playwright' CHECK (transport_type IN ('playwright', 'api')),
+  status              text DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'restricted', 'banned')),
+  proxy_id            uuid REFERENCES proxies(id) ON DELETE SET NULL,
+  session_data        jsonb,
+  daily_dm_limit      int DEFAULT 50,
+  dms_sent_today      int DEFAULT 0,
+  dms_sent_reset      timestamptz,
+  cooldown_until      timestamptz,
+  cooldown_step       int DEFAULT 0,
+  last_health_check   timestamptz,
+  last_inbox_sync     timestamptz,
+  created_at          timestamptz DEFAULT now()
+);
+
+ALTER TABLE proxies
+  ADD CONSTRAINT fk_proxy_assigned_account
+  FOREIGN KEY (assigned_account_id)
+  REFERENCES tiktok_accounts(id) ON DELETE SET NULL;
+
+CREATE INDEX idx_accounts_user ON tiktok_accounts(user_id);
+CREATE INDEX idx_accounts_status ON tiktok_accounts(user_id, status);
+CREATE INDEX idx_proxies_user ON proxies(user_id);
+```
+
+6. Click **New Query** again, paste the second migration, and click **Run**:
+
+```sql
+CREATE TABLE conversations (
+  id                      uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  account_id              uuid NOT NULL REFERENCES tiktok_accounts(id) ON DELETE CASCADE,
+  peer_username           text NOT NULL,
+  peer_display_name       text,
+  peer_avatar             text,
+  last_message_text       text,
+  last_message_at         timestamptz,
+  last_message_direction  text CHECK (last_message_direction IN ('inbound', 'outbound')),
+  unread_count            int DEFAULT 0,
+  archived                boolean DEFAULT false,
+  labels                  text[] DEFAULT '{}',
+  created_at              timestamptz DEFAULT now(),
+  UNIQUE(account_id, peer_username)
+);
+
+CREATE TABLE messages (
+  id                uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  conversation_id   uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  account_id        uuid NOT NULL REFERENCES tiktok_accounts(id) ON DELETE CASCADE,
+  direction         text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+  body              text,
+  media_url         text,
+  tiktok_msg_id     text,
+  status            text DEFAULT 'delivered' CHECK (status IN ('delivered', 'failed', 'pending')),
+  sent_at           timestamptz NOT NULL,
+  created_at        timestamptz DEFAULT now(),
+  UNIQUE(account_id, tiktok_msg_id)
+);
+
+CREATE INDEX idx_conversations_account ON conversations(account_id);
+CREATE INDEX idx_conversations_last_msg ON conversations(last_message_at DESC);
+CREATE INDEX idx_conversations_unread ON conversations(account_id) WHERE unread_count > 0;
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, sent_at DESC);
+CREATE INDEX idx_messages_account ON messages(account_id);
+```
+
+Both should return "Success. No rows returned." You should see 4 tables in the **Table Editor**.
+
+---
+
+## Step 2: Get Your Supabase Credentials
+
+1. In the Supabase dashboard, go to **Project Settings** (gear icon, bottom-left)
+2. Click **API**
+3. Copy:
+   - **Project URL** — looks like `https://abcdefg.supabase.co`
+   - **service_role key** — click "Reveal" on the second key under "Project API keys"
+
+---
+
+## Step 3: Install Dependencies
+
+### Windows (CMD)
+
+```
+cd C:\path\to\toktikc2
+
+cd server
+npm install
+npx playwright install chromium
+cd ..
+
+cd frontend
+npm install
+cd ..
+```
+
+### Linux / macOS
+
+```
+cd /path/to/toktikc2
+
+cd server && npm install && npx playwright install chromium && cd ..
+cd frontend && npm install && cd ..
+```
+
+---
+
+## Step 4: Configure Environment
+
+### Windows (CMD)
+
+Create the `.env` file in the `server` folder:
+
+```
+cd server
+echo SUPABASE_URL=https://YOUR-PROJECT-ID.supabase.co> .env
+echo SUPABASE_KEY=your-service-role-key-here>> .env
+echo PORT=4000>> .env
+echo ENABLE_INBOX_SYNC=false>> .env
+echo DEFAULT_USER=admin>> .env
+echo DEFAULT_PASS=admin>> .env
+```
+
+Replace `YOUR-PROJECT-ID` and `your-service-role-key-here` with your actual values from Step 2.
+
+### Linux / macOS
+
+```
+cd server
+cp ../.env.example .env
+```
+
+Then edit `.env` with your Supabase credentials.
+
+### Full Configuration Reference
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SUPABASE_URL` | — | Your Supabase project URL (required) |
+| `SUPABASE_KEY` | — | Supabase service_role key (required) |
+| `PORT` | 4000 | Backend server port |
+| `MAX_CONCURRENT_BROWSERS` | 5 | How many Playwright browsers run at once |
+| `BROWSER_IDLE_TIMEOUT_MS` | 60000 | Close idle browsers after 60s |
+| `INBOX_SYNC_INTERVAL_MS` | 30000 | Background sync every 30s |
+| `HEADED_MODE` | false | Set to true to see browser windows (debugging) |
+| `ENABLE_INBOX_SYNC` | false | Set to true to start syncing DMs on boot |
+| `DEFAULT_USER` | admin | Login username |
+| `DEFAULT_PASS` | admin | Login password |
+
+---
+
+## Step 5: Start the Backend
+
+### Windows (CMD)
+
+```
+cd server
+npx tsx index.ts
+```
+
+### Linux / macOS
+
+```
+cd server && npm run dev
+```
+
+You should see:
+
+```
+[server] listening on :4000
+```
+
+---
+
+## Step 6: Start the Frontend
+
+Open a **second terminal window**:
+
+### Windows (CMD)
+
+```
+cd frontend
+npx vite
+```
+
+### Linux / macOS
+
+```
+cd frontend && npm run dev
+```
+
+You should see:
+
+```
+VITE v8.x.x  ready
+
+  Local:   http://localhost:5173/
+```
+
+---
+
+## Step 7: Log In
+
+1. Open **http://localhost:5173** in your browser
+2. Username: `admin`
+3. Password: `admin`
+
+You should see the TokTik C2 dashboard with three sidebar tabs: Inbox, Accounts, Settings.
+
+---
+
+## Step 8: Verify Everything Works
+
+| Check | How | Expected |
+|-------|-----|----------|
+| Backend alive | Visit http://localhost:4000/api/health | JSON with `"status": "ok"` |
+| Database connected | Go to Accounts page, click "Add Account", enter a test username | Account appears in the list |
+| Frontend routing | Click Inbox, Accounts, Settings in sidebar | Each page loads without errors |
+| Settings health | Go to Settings page | Shows system status, uptime, browser pool stats |
+
+---
+
+## Adding TikTok Accounts
+
+### Via the UI
+
+1. Go to the **Accounts** page
+2. Click **Add Account**
+3. Enter the TikTok username (without the @)
+4. Set the daily DM limit
+5. Optionally assign a proxy (add proxies first via **Settings**)
+
+### Bulk Import via CSV
+
+Create a CSV file with columns: `username,display_name,transport_type,daily_dm_limit`
+
+```
+username,display_name,transport_type,daily_dm_limit
+brand_account_1,Brand One,playwright,50
+brand_account_2,Brand Two,playwright,30
+```
+
+Run from the server directory:
+
+```
+npx tsx ../scripts/seed-accounts.ts path/to/accounts.csv
+```
+
+---
+
+## Adding Proxies
+
+1. Go to **Settings**
+2. Click **Add Proxy**
+3. Enter: host, port, username (optional), password (optional), type, country
+4. After adding, go to **Accounts** and edit each account to assign its proxy
+
+Each account should have its own dedicated proxy. Sharing proxies across accounts increases detection risk.
+
+---
+
+## Enabling Live Inbox Sync
+
+Once accounts and proxies are configured:
+
+1. Stop the backend (Ctrl+C)
+2. Update `.env`:
+   ```
+   ENABLE_INBOX_SYNC=true
+   ```
+3. Restart the backend:
+   ```
+   npx tsx index.ts
+   ```
+
+The sync ticker will begin rotating through connected accounts every 30 seconds, pulling new DMs and pushing them to the inbox in real-time.
+
+---
+
+## Docker Deployment
+
+For production deployment with Docker:
+
+```
+docker compose up -d
+```
+
+Requires a `.env` file in the project root. The backend container includes Chromium for Playwright. Frontend is served as a static build on port 5173, backend on port 4000.
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `Missing SUPABASE_URL or SUPABASE_KEY` | Make sure `.env` is in the `server` directory and contains both values. Make sure `import 'dotenv/config'` is the first line of `server/utils/supabase.ts` |
+| Login fails silently | Check the browser console for errors. Verify the backend is running on port 4000 |
+| `ECONNREFUSED` on frontend | The backend isn't running. Start it first with `npx tsx index.ts` in the server directory |
+| Playwright browser fails to launch | Run `npx playwright install chromium` in the server directory |
+| Accounts stuck as "disconnected" | The account needs a valid TikTok session. Log in manually via headed mode (`HEADED_MODE=true`) to capture cookies |
+| Rate limit / cooldown | The account entered exponential backoff. Wait for `cooldown_until` to expire, or reset it in Supabase |
