@@ -682,6 +682,16 @@ app.post('/api/controls/campaign-worker', asyncH(async (req, res) => {
   res.json({ campaign_worker: campaignWorkerRunning })
 }))
 
+// ── Static Frontend (production) ────────────────────────────
+import path from 'path'
+import { fileURLToPath } from 'url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist')
+app.use(express.static(frontendDist))
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(frontendDist, 'index.html'))
+})
+
 // ── Start ───────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || '4000')
 server.listen(PORT, () => {
