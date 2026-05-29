@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { get, post, put } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn, timeAgo } from '../lib/utils'
-import { Send, Archive, ArchiveRestore, Check, Filter } from 'lucide-react'
+import { Send, Archive, ArchiveRestore, Check, Filter, ChevronDown, ChevronRight, X } from 'lucide-react'
 
 interface TikTokAccount {
   id: string
@@ -23,6 +23,20 @@ interface Conversation {
   unread_count: number
   archived: boolean
   labels: string[]
+  pipeline_stage_id: string | null
+}
+
+interface Note {
+  id: string
+  conversation_id: string
+  body: string
+  created_at: string
+}
+
+interface PipelineStage {
+  id: string
+  name: string
+  position: number
 }
 
 interface Message {
@@ -55,8 +69,20 @@ export function Unibox() {
   const [unreadOnly, setUnreadOnly] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // Notes state (7.1)
+  const [notes, setNotes] = useState<Note[]>([])
+  const [noteText, setNoteText] = useState('')
+  const [notesExpanded, setNotesExpanded] = useState(true)
+
+  // Pipeline stages state (7.2)
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([])
+
+  // Labels state (7.3)
+  const [labelInput, setLabelInput] = useState('')
+
   useEffect(() => {
     get<TikTokAccount[]>('/accounts').then(setAccounts)
+    get<PipelineStage[]>('/pipeline-stages').then(setPipelineStages)
   }, [])
 
   const loadConversations = useCallback(async () => {
@@ -110,6 +136,7 @@ export function Unibox() {
   async function selectConversation(conv: Conversation) {
     setSelectedConvId(conv.id)
     setMessages([])
+    setNotes([])
 
     const cached = await get<Message[]>(`/messages?conversation_id=${conv.id}`)
     if (cached.length > 0) {
@@ -125,6 +152,9 @@ export function Unibox() {
         setFetchingMessages(false)
       }
     }
+
+    // Fetch notes for this conversation
+    get<Note[]>(`/conversations/${conv.id}/notes`).then(setNotes).catch(() => setNotes([]))
 
     if (conv.unread_count > 0) {
       await put(`/conversations/${conv.id}`, { unread_count: 0 })
@@ -169,6 +199,62 @@ export function Unibox() {
       else next.add(id)
       return next
     })
+  }
+
+  // 7.1 - Add note
+  async function handleAddNote() {
+    if (!selectedConvId || !noteText.trim()) return
+    try {
+      const note = await post<Note>(`/conversations/${selectedConvId}/notes`, { body: noteText.trim() })
+      setNotes((prev) => [...prev, note])
+      setNoteText('')
+    } catch { /* ignore */ }
+  }
+
+  // 7.2 - Change pipeline stage
+  async function handleStageChange(stageId: string) {
+    if (!selectedConvId) return
+    const newStageId = stageId || null
+    // Optimistic update
+    setConversations((prev) =>
+      prev.map((c) => (c.id === selectedConvId ? { ...c, pipeline_stage_id: newStageId } : c))
+    )
+    try {
+      await put(`/conversations/${selectedConvId}/stage`, { stage_id: newStageId })
+    } catch {
+      // Revert on failure
+      loadConversations()
+    }
+  }
+
+  // 7.3 - Label management
+  async function handleAddLabel(label: string) {
+    if (!selectedConv || !label.trim()) return
+    const updated = [...selectedConv.labels, label.trim()]
+    // Optimistic update
+    setConversations((prev) =>
+      prev.map((c) => (c.id === selectedConvId ? { ...c, labels: updated } : c))
+    )
+    setLabelInput('')
+    try {
+      await put(`/conversations/${selectedConvId}/labels`, updated)
+    } catch {
+      loadConversations()
+    }
+  }
+
+  async function handleRemoveLabel(label: string) {
+    if (!selectedConv) return
+    const updated = selectedConv.labels.filter((l) => l !== label)
+    // Optimistic update
+    setConversations((prev) =>
+      prev.map((c) => (c.id === selectedConvId ? { ...c, labels: updated } : c))
+    )
+    try {
+      await put(`/conversations/${selectedConvId}/labels`, updated)
+    } catch {
+      loadConversations()
+    }
   }
 
   const accountMap = new Map(accounts.map((a) => [a.id, a]))
@@ -292,8 +378,21 @@ export function Unibox() {
           <>
             <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
               <div>
-                <div className="text-sm font-medium text-white">
-                  {selectedConv.peer_display_name || `@${selectedConv.peer_username}`}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-white">
+                    {selectedConv.peer_display_name || `@${selectedConv.peer_username}`}
+                  </span>
+                  {/* 7.2 - Pipeline stage selector */}
+                  <select
+                    value={selectedConv.pipeline_stage_id || ''}
+                    onChange={(e) => handleStageChange(e.target.value)}
+                    className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[11px] text-zinc-300 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">No stage</option>
+                    {pipelineStages.map((stage) => (
+                      <option key={stage.id} value={stage.id}>{stage.name}</option>
+                    ))}
+                  </select>
                 </div>
                 {selectedAccount && (
                   <div className="text-xs text-zinc-500">
@@ -308,6 +407,36 @@ export function Unibox() {
               >
                 {selectedConv.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
               </button>
+            </div>
+
+            {/* 7.3 - Labels section */}
+            <div className="flex items-center gap-1.5 border-b border-zinc-800 px-4 py-1.5 flex-wrap">
+              {selectedConv.labels.map((label) => (
+                <span
+                  key={label}
+                  className="inline-flex items-center gap-0.5 rounded-full bg-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300"
+                >
+                  {label}
+                  <button
+                    onClick={() => handleRemoveLabel(label)}
+                    className="ml-0.5 rounded-full p-0.5 text-zinc-400 hover:bg-zinc-600 hover:text-white"
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+              <input
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && labelInput.trim()) {
+                    e.preventDefault()
+                    handleAddLabel(labelInput)
+                  }
+                }}
+                placeholder="+ label"
+                className="w-16 bg-transparent text-[11px] text-zinc-400 placeholder-zinc-600 focus:outline-none"
+              />
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
@@ -351,6 +480,57 @@ export function Unibox() {
                 </div>
               ))}
               <div ref={messagesEndRef} />
+            </div>
+
+            {/* 7.1 - Notes section */}
+            <div className="border-t border-zinc-800">
+              <button
+                onClick={() => setNotesExpanded(!notesExpanded)}
+                className="flex w-full items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-900/10"
+              >
+                {notesExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                Notes ({notes.length})
+              </button>
+              {notesExpanded && (
+                <div className="px-4 pb-2 space-y-1.5">
+                  {notes.length > 0 && (
+                    <div className="max-h-32 overflow-y-auto space-y-1.5">
+                      {notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="rounded bg-amber-900/20 border border-amber-800/30 px-2.5 py-1.5 text-xs text-amber-200"
+                        >
+                          <div>{note.body}</div>
+                          <div className="mt-0.5 text-[10px] text-amber-400/60">
+                            {new Date(note.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-1.5">
+                    <input
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleAddNote()
+                        }
+                      }}
+                      placeholder="Add a note..."
+                      className="flex-1 rounded border border-amber-800/30 bg-amber-900/10 px-2 py-1 text-xs text-amber-100 placeholder-amber-600/50 focus:border-amber-600 focus:outline-none"
+                    />
+                    <button
+                      onClick={handleAddNote}
+                      disabled={!noteText.trim()}
+                      className="rounded bg-amber-700 px-2 py-1 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+                    >
+                      Add Note
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="border-t border-zinc-800 p-3">

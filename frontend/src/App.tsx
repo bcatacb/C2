@@ -5,6 +5,7 @@ import { Login } from './pages/Login'
 import { Accounts } from './pages/Accounts'
 import { Leads } from './pages/Leads'
 import { Campaigns } from './pages/Campaigns'
+import { Pipeline } from './pages/Pipeline'
 import { Unibox } from './pages/Unibox'
 import { Settings } from './pages/Settings'
 
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="leads" element={<Leads />} />
           <Route path="campaigns" element={<Campaigns />} />
+          <Route path="pipeline" element={<Pipeline />} />
           <Route path="unibox" element={<Unibox />} />
           <Route path="settings" element={<Settings />} />
         </Route>

@@ -11,7 +11,7 @@ import {
   listProxies, createProxy, updateProxy, deleteProxy, assignProxyToAccount,
 } from './services/proxy-manager.js'
 import {
-  listLeads, getLead, createLead, updateLead, deleteLead, executeBulkAction, getStats,
+  listLeads, getLead, createLead, updateLead, deleteLead, executeBulkAction, getStats as getLeadStats,
   type LeadFilters, type LeadStatus, type BulkAction,
 } from './services/lead-service.js'
 import { processImport, type CSVRow, type ImportDefaults } from './services/csv-importer.js'
@@ -20,6 +20,11 @@ import {
   deleteCampaign, activateCampaign, pauseCampaign, resumeCampaign, getCampaignLeads,
 } from './services/campaign-service.js'
 import { startCampaignWorker } from './services/campaign-worker.js'
+import {
+  listStages, createStage, updateStage, deleteStage,
+  moveConversationToStage, getConversationsByPipeline, getStats as getPipelineStats, updateLabels,
+} from './services/pipeline-service.js'
+import { listNotes, createNote, deleteNote } from './services/note-service.js'
 import { sendMessage } from './services/message-sender.js'
 import { startInboxSync } from './services/inbox-sync.js'
 import { getPoolStatus, acquireSession, destroySession, pinSession, getSession } from './transport/session-pool.js'
@@ -328,7 +333,7 @@ app.get('/api/leads', asyncH(async (_req, res) => {
 }))
 
 app.get('/api/leads/stats', asyncH(async (_req, res) => {
-  const stats = await getStats()
+  const stats = await getLeadStats()
   res.json(stats)
 }))
 
@@ -447,6 +452,125 @@ app.get('/api/campaigns/:id/leads', asyncH(async (req, res) => {
     per_page: query.per_page ? parseInt(query.per_page as string) : undefined,
   })
   res.json(leads)
+}))
+
+// ── Pipeline Stages ─────────────────────────────────────────
+app.get('/api/pipeline-stages', asyncH(async (_req, res) => {
+  const stages = await listStages()
+  res.json(stages)
+}))
+
+app.post('/api/pipeline-stages', asyncH(async (req, res) => {
+  try {
+    const stage = await createStage(req.body)
+    broadcast('pipeline-stage:created', stage)
+    res.status(201).json(stage)
+  } catch (err: any) {
+    if (err.message === 'Stage name already exists') {
+      res.status(409).json({ error: 'Stage name already exists' })
+      return
+    }
+    throw err
+  }
+}))
+
+app.put('/api/pipeline-stages/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  try {
+    const stage = await updateStage(id, req.body)
+    broadcast('pipeline-stage:updated', stage)
+    res.json(stage)
+  } catch (err: any) {
+    if (err.message === 'Stage name already exists') {
+      res.status(409).json({ error: 'Stage name already exists' })
+      return
+    }
+    throw err
+  }
+}))
+
+app.delete('/api/pipeline-stages/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  await deleteStage(id)
+  broadcast('pipeline-stage:deleted', { id })
+  res.json({ ok: true })
+}))
+
+// ── Conversation Pipeline ───────────────────────────────────
+app.put('/api/conversations/:id/stage', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  try {
+    const conversation = await moveConversationToStage(id, req.body.stage_id)
+    broadcast('conversation:updated', conversation)
+    res.json(conversation)
+  } catch (err: any) {
+    if (err.message === 'Pipeline stage not found') {
+      res.status(404).json({ error: 'Pipeline stage not found' })
+      return
+    }
+    throw err
+  }
+}))
+
+app.get('/api/conversations/pipeline', asyncH(async (req, res) => {
+  const filters: { account_id?: string; labels?: string[] } = {}
+  if (req.query.account_id) filters.account_id = req.query.account_id as string
+  if (req.query.labels) filters.labels = (req.query.labels as string).split(',')
+  const result = await getConversationsByPipeline(filters)
+  res.json(result)
+}))
+
+app.put('/api/conversations/:id/labels', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  try {
+    const conversation = await updateLabels(id, req.body.labels)
+    broadcast('conversation:updated', conversation)
+    res.json(conversation)
+  } catch (err: any) {
+    if (err.message.startsWith('Each label must be')) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+}))
+
+app.get('/api/pipeline-stats', asyncH(async (_req, res) => {
+  const stats = await getPipelineStats()
+  res.json(stats)
+}))
+
+// ── Notes ───────────────────────────────────────────────────
+app.get('/api/conversations/:id/notes', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const notes = await listNotes(id)
+  res.json(notes)
+}))
+
+app.post('/api/conversations/:id/notes', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  try {
+    const note = await createNote(id, req.body.body)
+    broadcast('note:created', note)
+    res.status(201).json(note)
+  } catch (err: any) {
+    if (err.message === 'Conversation not found') {
+      res.status(404).json({ error: 'Conversation not found' })
+      return
+    }
+    if (err.message.startsWith('Note body')) {
+      res.status(400).json({ error: err.message })
+      return
+    }
+    throw err
+  }
+}))
+
+app.delete('/api/notes/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  await deleteNote(id)
+  broadcast('note:deleted', { id })
+  res.json({ ok: true })
 }))
 
 // ── Messages ────────────────────────────────────────────────

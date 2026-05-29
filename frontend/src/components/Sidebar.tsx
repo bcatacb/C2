@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Inbox, Users, Target, Megaphone, Settings } from 'lucide-react'
+import { Inbox, Users, Target, Megaphone, Kanban, Settings } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 const links = [
@@ -7,6 +7,7 @@ const links = [
   { to: '/app/accounts', label: 'Accounts', icon: Users },
   { to: '/app/leads', label: 'Leads', icon: Target },
   { to: '/app/campaigns', label: 'Campaigns', icon: Megaphone },
+  { to: '/app/pipeline', label: 'Pipeline', icon: Kanban },
   { to: '/app/settings', label: 'Settings', icon: Settings },
 ]
 
