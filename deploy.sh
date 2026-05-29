@@ -1,10 +1,12 @@
 #!/bin/bash
 # TokTik C2 Deploy Script
-# Run this on your VPS: bash deploy.sh
+# Run from inside the cloned repo directory: bash deploy.sh
 
 set -e
 
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "=== TokTik C2 Deploy ==="
+echo "App directory: $APP_DIR"
 
 # Install Node.js 20 if not present
 if ! command -v node &> /dev/null; then
@@ -18,49 +20,38 @@ echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y nginx certbot python3-certbot-nginx
 
-# Clone or pull repo
-if [ -d "/opt/c2" ]; then
-  echo "Updating existing install..."
-  cd /opt/c2
-  git pull
-else
-  echo "Cloning repo..."
-  sudo git clone https://github.com/bcatacb/C2.git /opt/c2
-  cd /opt/c2
-fi
-
 # Install server deps
 echo "Installing server dependencies..."
-cd /opt/c2/server
+cd "$APP_DIR/server"
 npm install
 npx playwright install chromium
 npx playwright install-deps chromium
 
 # Install frontend deps and build
 echo "Building frontend..."
-cd /opt/c2/frontend
+cd "$APP_DIR/frontend"
 npm install
 npx vite build
 
 # Create .env if not exists
-if [ ! -f /opt/c2/server/.env ]; then
+if [ ! -f "$APP_DIR/server/.env" ]; then
   echo "Creating .env from example..."
-  cp /opt/c2/server/.env.example /opt/c2/server/.env
+  cp "$APP_DIR/server/.env.example" "$APP_DIR/server/.env"
   echo ""
-  echo "⚠️  EDIT /opt/c2/server/.env with your Supabase credentials!"
+  echo "⚠️  EDIT $APP_DIR/server/.env with your Supabase credentials!"
   echo ""
 fi
 
-# Install nginx config
+# Install nginx config (update paths in config first)
 echo "Setting up nginx..."
-sudo cp /opt/c2/nginx.conf /etc/nginx/sites-available/c2
+sed "s|/opt/c2|$APP_DIR|g" "$APP_DIR/nginx.conf" | sudo tee /etc/nginx/sites-available/c2 > /dev/null
 sudo ln -sf /etc/nginx/sites-available/c2 /etc/nginx/sites-enabled/c2
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
-# Create systemd service
+# Create systemd service (update paths)
 echo "Setting up systemd service..."
-sudo cp /opt/c2/c2.service /etc/systemd/system/c2.service
+sed "s|/opt/c2|$APP_DIR|g" "$APP_DIR/c2.service" | sudo tee /etc/systemd/system/c2.service > /dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable c2
 sudo systemctl restart c2
@@ -76,6 +67,6 @@ echo "Service: sudo systemctl status c2"
 echo "Logs: sudo journalctl -u c2 -f"
 echo ""
 echo "Don't forget to:"
-echo "1. Edit /opt/c2/server/.env with Supabase creds"
+echo "1. Edit $APP_DIR/server/.env with Supabase creds"
 echo "2. Point DNS A record for c2.effortlessmetaphor.org → 192.175.22.236"
 echo "3. Run migrations in Supabase SQL editor"

@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=ogt
 WorkingDirectory=/opt/c2/server
 ExecStart=/usr/bin/npx tsx index.ts
 Restart=always
