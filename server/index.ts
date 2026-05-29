@@ -25,6 +25,9 @@ import {
   moveConversationToStage, getConversationsByPipeline, getStats as getPipelineStats, updateLabels,
 } from './services/pipeline-service.js'
 import { listNotes, createNote, deleteNote } from './services/note-service.js'
+import {
+  listRules, createRule, updateRule, deleteRule, toggleRule, getLog as getAutomationLog,
+} from './services/automation-engine.js'
 import { sendMessage } from './services/message-sender.js'
 import { startInboxSync, stopInboxSync } from './services/inbox-sync.js'
 import { getPoolStatus, acquireSession, destroySession, pinSession, getSession } from './transport/session-pool.js'
@@ -571,6 +574,48 @@ app.delete('/api/notes/:id', asyncH(async (req, res) => {
   await deleteNote(id)
   broadcast('note:deleted', { id })
   res.json({ ok: true })
+}))
+
+// ── Automation ──────────────────────────────────────────────
+app.get('/api/automation-rules', asyncH(async (_req, res) => {
+  const rules = await listRules()
+  res.json(rules)
+}))
+
+app.post('/api/automation-rules', asyncH(async (req, res) => {
+  const rule = await createRule(req.body)
+  broadcast('automation-rule:created', rule)
+  res.status(201).json(rule)
+}))
+
+app.put('/api/automation-rules/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const rule = await updateRule(id, req.body)
+  broadcast('automation-rule:updated', rule)
+  res.json(rule)
+}))
+
+app.delete('/api/automation-rules/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  await deleteRule(id)
+  broadcast('automation-rule:deleted', { id })
+  res.json({ ok: true })
+}))
+
+app.post('/api/automation-rules/:id/toggle', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const rule = await toggleRule(id)
+  broadcast('automation-rule:updated', rule)
+  res.json(rule)
+}))
+
+app.get('/api/automation-log', asyncH(async (req, res) => {
+  const query = req.query
+  const result = await getAutomationLog({
+    page: parseInt(query.page as string),
+    per_page: parseInt(query.per_page as string),
+  })
+  res.json(result)
 }))
 
 // ── Messages ────────────────────────────────────────────────

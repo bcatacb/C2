@@ -6,6 +6,7 @@ import type { TikTokTransport, ConversationData, MessageData } from '../transpor
 import { isInCooldown, nextCooldown } from '../utils/cooldown.js'
 import { broadcast } from '../index.js'
 import { markLeadReplied } from './campaign-service.js'
+import { evaluateRules, type InboundMessageContext } from './automation-engine.js'
 
 const SYNC_INTERVAL = parseInt(process.env.INBOX_SYNC_INTERVAL_MS || '30000')
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_BROWSERS || '5')
@@ -133,6 +134,42 @@ async function detectCampaignReplies(accountId: string, conversations: Conversat
   }
 }
 
+async function runAutomation(
+  accountId: string,
+  conversations: ConversationData[],
+  existingConvIds: Set<string>,
+  convRecords: Map<string, { id: string; labels?: string[] }>
+): Promise<void> {
+  for (const conv of conversations) {
+    if (conv.unreadCount <= 0) continue
+
+    const record = convRecords.get(conv.peerUsername)
+    if (!record) continue
+
+    const isNewSender = !existingConvIds.has(record.id)
+
+    const context: InboundMessageContext = {
+      account_id: accountId,
+      conversation_id: record.id,
+      peer_username: conv.peerUsername,
+      peer_display_name: conv.peerDisplayName,
+      message_text: conv.lastMessageText || '',
+      is_new_sender: isNewSender,
+      is_first_campaign_reply: false, // already handled by detectCampaignReplies
+      conversation_labels: record.labels || [],
+    }
+
+    try {
+      const results = await evaluateRules(context)
+      if (results.length > 0) {
+        console.log(`[automation] ${results.length} rules fired for ${conv.peerUsername}`)
+      }
+    } catch (err) {
+      console.error(`[automation] error evaluating rules for ${conv.peerUsername}:`, err instanceof Error ? err.message : err)
+    }
+  }
+}
+
 async function syncAccount(account: TikTokAccount): Promise<void> {
   if (isInCooldown(account.cooldown_until)) {
     console.log(`[sync] skipping ${account.username} — in cooldown`)
@@ -162,14 +199,28 @@ async function syncAccount(account: TikTokAccount): Promise<void> {
       }
     }
 
+    // Query existing conversation IDs before upsert to detect new senders
+    const { data: existingConvs } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('account_id', account.id)
+
+    const existingConvIds = new Set((existingConvs || []).map(c => c.id))
+
+    const convRecords = new Map<string, { id: string; labels?: string[] }>()
+
     for (const conv of conversations) {
       const convRecord = await upsertConversation(account.id, conv)
       if (!convRecord) continue
+      convRecords.set(conv.peerUsername, { id: convRecord.id, labels: convRecord.labels })
       broadcast('conversation:updated', convRecord)
     }
 
     // Detect replies from leads enrolled in active campaigns
     await detectCampaignReplies(account.id, conversations)
+
+    // Evaluate automation rules for conversations with unread messages
+    await runAutomation(account.id, conversations, existingConvIds, convRecords)
 
     await updateAccount(account.id, {
       last_inbox_sync: new Date().toISOString(),
