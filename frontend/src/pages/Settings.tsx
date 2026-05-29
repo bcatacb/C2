@@ -19,10 +19,12 @@ export function Settings() {
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState({ host: '', port: '', username: '', password: '', type: 'residential', country: '' })
   const [health, setHealth] = useState<{ status: string; uptime: number; pool?: { active: number; maxConcurrent: number; queued: number } } | null>(null)
+  const [controls, setControls] = useState<{ inbox_sync: boolean; campaign_worker: boolean } | null>(null)
 
   useEffect(() => {
     get<Proxy[]>('/proxies').then(setProxies)
     get<typeof health>('/health').then(setHealth)
+    get<{ inbox_sync: boolean; campaign_worker: boolean }>('/controls').then(setControls)
   }, [])
 
   async function handleAddProxy() {
@@ -70,6 +72,44 @@ export function Settings() {
                   </div>
                 </div>
               )}
+            </div>
+          </section>
+        )}
+
+        {controls && (
+          <section>
+            <h2 className="mb-3 text-sm font-medium text-zinc-300">Services</h2>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
+                <div>
+                  <div className="text-sm text-white">Inbox Sync</div>
+                  <div className="text-xs text-zinc-500">Scrapes DMs from connected accounts every 30s</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    const res = await post<{ inbox_sync: boolean }>('/controls/inbox-sync', { enabled: !controls.inbox_sync })
+                    setControls(prev => prev ? { ...prev, inbox_sync: res.inbox_sync } : prev)
+                  }}
+                  className={`rounded px-3 py-1.5 text-xs font-medium ${controls.inbox_sync ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'}`}
+                >
+                  {controls.inbox_sync ? 'Running' : 'Stopped'}
+                </button>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
+                <div>
+                  <div className="text-sm text-white">Campaign Worker</div>
+                  <div className="text-xs text-zinc-500">Processes active campaigns and sends DMs</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    const res = await post<{ campaign_worker: boolean }>('/controls/campaign-worker', { enabled: !controls.campaign_worker })
+                    setControls(prev => prev ? { ...prev, campaign_worker: res.campaign_worker } : prev)
+                  }}
+                  className={`rounded px-3 py-1.5 text-xs font-medium ${controls.campaign_worker ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'}`}
+                >
+                  {controls.campaign_worker ? 'Running' : 'Stopped'}
+                </button>
+              </div>
             </div>
           </section>
         )}

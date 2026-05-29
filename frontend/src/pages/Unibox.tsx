@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { get, post, put } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn, timeAgo } from '../lib/utils'
-import { Send, Archive, ArchiveRestore, Check, Filter, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { Send, Archive, ArchiveRestore, Check, Filter, ChevronDown, ChevronRight, X, Download } from 'lucide-react'
 
 interface TikTokAccount {
   id: string
@@ -317,9 +317,28 @@ export function Unibox() {
 
       {/* Center pane: Conversation list */}
       <div className="flex w-80 flex-col border-r border-zinc-800">
-        <div className="border-b border-zinc-800 px-4 py-2">
-          <div className="text-sm font-medium text-white">Conversations</div>
-          <div className="text-xs text-zinc-500">{filteredConvs.length} conversations</div>
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2">
+          <div>
+            <div className="text-sm font-medium text-white">Conversations</div>
+            <div className="text-xs text-zinc-500">{filteredConvs.length} conversations</div>
+          </div>
+          <button
+            onClick={async () => {
+              const usernames = filteredConvs.map(c => c.peer_username)
+              let imported = 0
+              for (const username of usernames) {
+                try {
+                  await post('/leads', { username, source: 'inbox' })
+                  imported++
+                } catch { /* skip duplicates */ }
+              }
+              alert(`Exported ${imported} conversations to Leads (${usernames.length - imported} already existed)`)
+            }}
+            className="flex items-center gap-1 rounded bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600"
+            title="Export visible conversations as leads"
+          >
+            <Download size={12} /> To Leads
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           {filteredConvs.map((conv) => {

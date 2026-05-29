@@ -17,6 +17,7 @@ export interface TikTokAccount {
   cooldown_step: number
   last_health_check: string | null
   last_inbox_sync: string | null
+  sync_enabled: boolean
   created_at: string
 }
 
@@ -71,6 +72,7 @@ export async function getAccountsDueForSync(limit: number): Promise<TikTokAccoun
     .select('*')
     .in('status', ['connected', 'disconnected'])
     .not('session_data', 'is', null)
+    .eq('sync_enabled', true)
     .order('last_inbox_sync', { ascending: true, nullsFirst: true })
     .limit(limit)
   if (error) throw new Error(error.message)

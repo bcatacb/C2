@@ -16,6 +16,7 @@ interface TikTokAccount {
   cooldown_until: string | null
   cooldown_step: number
   last_inbox_sync: string | null
+  sync_enabled: boolean
   created_at: string
 }
 
@@ -250,6 +251,15 @@ export function Accounts() {
                     {account.last_inbox_sync && (
                       <span>Last sync: {new Date(account.last_inbox_sync).toLocaleTimeString()}</span>
                     )}
+                    <button
+                      onClick={async () => {
+                        const updated = await put<TikTokAccount>(`/accounts/${account.id}`, { sync_enabled: !account.sync_enabled })
+                        setAccounts((prev) => prev.map((a) => a.id === account.id ? updated : a))
+                      }}
+                      className={cn('rounded px-1.5 py-0.5', account.sync_enabled ? 'text-green-400 hover:text-green-300' : 'text-zinc-600 hover:text-zinc-400')}
+                    >
+                      Sync: {account.sync_enabled ? 'ON' : 'OFF'}
+                    </button>
                   </div>
                 </div>
                 <div className="flex gap-1">

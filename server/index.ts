@@ -19,14 +19,14 @@ import {
   listCampaigns, getCampaignWithStats, createCampaign, updateCampaign,
   deleteCampaign, activateCampaign, pauseCampaign, resumeCampaign, getCampaignLeads,
 } from './services/campaign-service.js'
-import { startCampaignWorker } from './services/campaign-worker.js'
+import { startCampaignWorker, stopCampaignWorker } from './services/campaign-worker.js'
 import {
   listStages, createStage, updateStage, deleteStage,
   moveConversationToStage, getConversationsByPipeline, getStats as getPipelineStats, updateLabels,
 } from './services/pipeline-service.js'
 import { listNotes, createNote, deleteNote } from './services/note-service.js'
 import { sendMessage } from './services/message-sender.js'
-import { startInboxSync } from './services/inbox-sync.js'
+import { startInboxSync, stopInboxSync } from './services/inbox-sync.js'
 import { getPoolStatus, acquireSession, destroySession, pinSession, getSession } from './transport/session-pool.js'
 
 const app = express()
@@ -604,6 +604,38 @@ app.post('/api/messages/send', asyncH(async (req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), pool: getPoolStatus() })
 })
+
+// ── Runtime Controls ────────────────────────────────────────
+let inboxSyncRunning = process.env.ENABLE_INBOX_SYNC !== 'false'
+let campaignWorkerRunning = process.env.ENABLE_CAMPAIGN_WORKER === 'true'
+
+app.get('/api/controls', (_req, res) => {
+  res.json({ inbox_sync: inboxSyncRunning, campaign_worker: campaignWorkerRunning })
+})
+
+app.post('/api/controls/inbox-sync', asyncH(async (req, res) => {
+  const { enabled } = req.body
+  if (enabled && !inboxSyncRunning) {
+    startInboxSync()
+    inboxSyncRunning = true
+  } else if (!enabled && inboxSyncRunning) {
+    stopInboxSync()
+    inboxSyncRunning = false
+  }
+  res.json({ inbox_sync: inboxSyncRunning })
+}))
+
+app.post('/api/controls/campaign-worker', asyncH(async (req, res) => {
+  const { enabled } = req.body
+  if (enabled && !campaignWorkerRunning) {
+    startCampaignWorker()
+    campaignWorkerRunning = true
+  } else if (!enabled && campaignWorkerRunning) {
+    stopCampaignWorker()
+    campaignWorkerRunning = false
+  }
+  res.json({ campaign_worker: campaignWorkerRunning })
+}))
 
 // ── Start ───────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || '4000')
