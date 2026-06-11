@@ -5,9 +5,16 @@ let handlers: MessageHandler[] = []
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function getWsUrl() {
+  const customBase = localStorage.getItem('c2_backend_url')
+  if (customBase) {
+    const cleanBase = customBase.replace(/^https?:\/\//, '')
+    const proto = customBase.startsWith('https') ? 'wss' : 'ws'
+    return `${proto}://${cleanBase}/ws`
+  }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   return `${proto}://${location.host}/ws`
 }
+
 
 export function connectWs() {
   if (socket?.readyState === WebSocket.OPEN) return

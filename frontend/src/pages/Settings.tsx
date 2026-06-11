@@ -20,12 +20,24 @@ export function Settings() {
   const [form, setForm] = useState({ host: '', port: '', username: '', password: '', type: 'residential', country: '' })
   const [health, setHealth] = useState<{ status: string; uptime: number; pool?: { active: number; maxConcurrent: number; queued: number } } | null>(null)
   const [controls, setControls] = useState<{ inbox_sync: boolean; campaign_worker: boolean } | null>(null)
+  const [backendUrl, setBackendUrl] = useState(localStorage.getItem('c2_backend_url') || '')
 
   useEffect(() => {
-    get<Proxy[]>('/proxies').then(setProxies)
-    get<typeof health>('/health').then(setHealth)
-    get<{ inbox_sync: boolean; campaign_worker: boolean }>('/controls').then(setControls)
+    get<Proxy[]>('/proxies').then(setProxies).catch(() => {})
+    get<typeof health>('/health').then(setHealth).catch(() => {})
+    get<{ inbox_sync: boolean; campaign_worker: boolean }>('/controls').then(setControls).catch(() => {})
   }, [])
+
+  function handleSaveBackendUrl() {
+    if (backendUrl.trim()) {
+      localStorage.setItem('c2_backend_url', backendUrl.trim())
+    } else {
+      localStorage.removeItem('c2_backend_url')
+    }
+    alert('Backend URL updated! Refreshing the page to apply changes.')
+    window.location.reload()
+  }
+
 
   async function handleAddProxy() {
     const proxy = await post<Proxy>('/proxies', {
@@ -52,6 +64,30 @@ export function Settings() {
       </div>
 
       <div className="space-y-6 p-6">
+        <section>
+          <h2 className="mb-3 text-sm font-medium text-zinc-300">Server Connection</h2>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <label className="block">
+              <span className="mb-2 block text-xs text-zinc-500">Backend Server URL</span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  placeholder="Relative path (e.g. default /api) or http://<ip>:4000"
+                  className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  onClick={handleSaveBackendUrl}
+                  className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  Save URL
+                </button>
+              </div>
+            </label>
+          </div>
+        </section>
+
         {health && (
           <section>
             <h2 className="mb-3 text-sm font-medium text-zinc-300">System Status</h2>

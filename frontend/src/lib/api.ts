@@ -1,10 +1,18 @@
-const API_BASE = '/api'
+function getApiBase() {
+  const customBase = localStorage.getItem('c2_backend_url')
+  if (customBase) {
+    return `${customBase.replace(/\/$/, '')}/api`
+  }
+  return '/api'
+}
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem('ui_token')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${API_BASE}${path}`, {
+  
+  const base = getApiBase()
+  const res = await fetch(`${base}${path}`, {
     headers: { ...headers, ...(options?.headers as Record<string, string>) },
     ...options,
   })
@@ -21,3 +29,4 @@ export const post = <T>(path: string, body: unknown) =>
 export const put = <T>(path: string, body: unknown) =>
   api<T>(path, { method: 'PUT', body: JSON.stringify(body) })
 export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' })
+

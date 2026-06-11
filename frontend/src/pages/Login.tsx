@@ -5,6 +5,7 @@ import { post } from '../lib/api'
 export function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [backendUrl, setBackendUrl] = useState(localStorage.getItem('c2_backend_url') || '')
   const [error, setError] = useState('')
   const navigate = useNavigate()
 
@@ -12,6 +13,11 @@ export function Login() {
     e.preventDefault()
     setError('')
     try {
+      if (backendUrl.trim()) {
+        localStorage.setItem('c2_backend_url', backendUrl.trim())
+      } else {
+        localStorage.removeItem('c2_backend_url')
+      }
       const res = await post<{ token: string }>('/auth/signin', { email: username, password })
       localStorage.setItem('ui_token', res.token)
       navigate('/app')
@@ -32,6 +38,16 @@ export function Login() {
             {error}
           </div>
         )}
+        <label className="mb-4 block">
+          <span className="mb-1 block text-sm text-zinc-400">Backend Server URL (optional)</span>
+          <input
+            type="text"
+            value={backendUrl}
+            onChange={(e) => setBackendUrl(e.target.value)}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+            placeholder="http://localhost:4000"
+          />
+        </label>
         <label className="mb-4 block">
           <span className="mb-1 block text-sm text-zinc-400">Username</span>
           <input
@@ -63,3 +79,4 @@ export function Login() {
     </div>
   )
 }
+
