@@ -1,36 +1,47 @@
-# Bug Fixes and UX Enhancements Walkthrough
+# C2 Messaging System Walkthrough
 
-All issues reported have been resolved and verified. The frontend compiles and builds successfully, and backend safety checks prevent crashes and infinite loops.
+All core issues and Phase 2 feature requirements have been successfully implemented, compiled, and verified.
 
-## Changes Made
+## Phase 2 Features Implemented
 
-### 1. Campaigns Page Safe Fallbacks
-- Added fallback safety checks (`?? []` and `|| {}`) to the campaign detail view in [Campaigns.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Campaigns.tsx).
-- This prevents the UI from throwing runtime TypeErrors and going white when a campaign contains `null` or `undefined` values for its steps or target filters in the database.
-- Fixed the campaign list to render property `c.total_leads` and `c.replied_count` instead of `c.stats?.total_leads` and `c.stats?.replied`, and cleaned up unused `put` import.
+### 1. See Follow-backs & Followers
+- **Scraper Transport**: Implemented `scrapeFollowers` in Playwright transport [playwright.ts](file:///c:/Users/ogt/c2/C2/server/transport/playwright.ts). It logs into TikTok, navigates to the account profile, opens the followers modal, scrolls down to load up to `limit` profiles, and detects mutual followers (friends).
+- **Background Imports**: Created `POST /api/accounts/:id/scrape-followers` in [index.ts](file:///c:/Users/ogt/c2/C2/server/index.ts) to run scraping, import handles as leads (tagged as `scraped_follower` and `mutual_follower`), and optionally enroll them directly into a lead list.
+- **Accounts UI Controls**: Added a "Scrape" button to connected accounts in [Accounts.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Accounts.tsx) which opens a modal to choose the scraper limits and destination list.
 
-### 2. Automation Logs Page Safe Fallbacks
-- Updated [index.ts](file:///c:/Users/ogt/c2/C2/server/index.ts) `/api/automation-log` handler to safely parse `page` and `per_page` query arguments, defaulting to `1` and `20` to avoid `NaN` in range queries.
-- Updated `LogTab` in [Automation.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Automation.tsx) to query the backend with `/automation-log?page=${p}&per_page=${limit}` and correctly parse the paginated wrapper object `{ data, total_pages }`.
-- Updated JSX rendering of `actions_taken` in [Automation.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Automation.tsx) to safely map and print action types and handle potential errors rather than rendering raw JSON objects.
+### 2. Folders & Lists (Organizing Leads)
+- **Database Schema**: Created [008_features_expansion.sql](file:///c:/Users/ogt/c2/C2/server/migrations/008_features_expansion.sql) introducing `lead_lists` and `lead_list_members` tables.
+- **Service Layer**: Created [lead-list-service.ts](file:///c:/Users/ogt/c2/C2/server/services/lead-list-service.ts) to manage CRUD list actions and lead list membership.
+- **Filtering Logic**: Extended [lead-service.ts](file:///c:/Users/ogt/c2/C2/server/services/lead-service.ts) to allow filtering and paging leads by a specific `list_id`.
+- **API Endpoints**: Registered CRUD routes in [index.ts](file:///c:/Users/ogt/c2/C2/server/index.ts):
+  - `GET /api/lists` - fetch folders with lead counts.
+  - `POST /api/lists` - create a new folder.
+  - `DELETE /api/lists/:id` - delete a folder.
+  - `POST /api/lists/:id/leads` - bulk add leads to a folder.
+  - `POST /api/lists/:id/leads/delete` - bulk remove leads from a folder.
+- **UI Integration**: Integrated a clean left sidebar in [Leads.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Leads.tsx) to browse custom folders, delete folders, and trigger bulk "Add to Folder" or "Remove from Folder" actions from the main table.
 
-### 3. User-Friendly Dropdowns for Automation Rules
-- Modified `CreateRuleForm` and `ActionFields` in [Automation.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Automation.tsx) to fetch accounts and stages on form initialization.
-- Replaced the manual text inputs for `Account ID` and `Stage ID` with beautiful dropdown `<select />` elements containing list of usernames and stage names.
+### 3. Click Users/Messages to Add to Folders
+- **Leads page**: Select leads and click the bulk action toolbar **"Add to Folder"** button to choose the folder list.
+- **Inbox thread view**: Added a **Folder** icon button in the header of the chat panel in [Unibox.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Unibox.tsx) to quickly enroll a conversation thread's sender as a lead and assign them to a folder on-demand.
 
-### 4. TikTok Username Lookup for Bulk Lead Assignment
-- Updated `handleBulkAssign()` on the Leads page in [Leads.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Leads.tsx) to list all available TikTok accounts and accept a typed username (e.g. `@parfenov.fm510` or `deadbread101`), automatically resolving it to the corresponding UUID for bulk database updates.
+### 4. Bulk Outreach & Auto-Rotating Sender Accounts
+- **Campaign Rotation**: Modified [campaign-worker.ts](file:///c:/Users/ogt/c2/C2/server/services/campaign-worker.ts) and [campaign-service.ts](file:///c:/Users/ogt/c2/C2/server/services/campaign-service.ts) to allow campaigns to run without assigned accounts (defaults to auto-rotating across all connected accounts).
+- **Load Balancing**: Sorted available accounts by daily message sent count ascending before round-robin distribution, ensuring message load is distributed equally to keep sending accounts at their lowest limits.
 
-### 5. Playwright Expired Session Handling
-- Updated `playwrightTransport.connect` in [playwright.ts](file:///c:/Users/ogt/c2/C2/server/transport/playwright.ts) to throw a login error if it finds itself logged out on TikTok, even if some stale `sessionData` is present.
-- Updated connection error handling in [inbox-sync.ts](file:///c:/Users/ogt/c2/C2/server/services/inbox-sync.ts) to clear the invalid `session_data` to `null` and set status to `disconnected`, preventing the sync loop from infinitely spawning browsers for stale/expired sessions.
+### 5. Daily DM Limit Tracking Progress Bars
+- **Accounts UI Status Indicators**: Added inline visual progress bars for each account in [Accounts.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Accounts.tsx), color-coded based on limits reached (orange for warnings at 80%+, red for limit reached).
 
-### 6. Pipeline Code Cleanup
-- Removed the unused `stages` state and its redundant API fetch from [Pipeline.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Pipeline.tsx) to clear TypeScript compiler warnings.
+### 6. Unread/Read/Replied Inbox filtering
+- **Conversation State Transitions**:
+  - Synced conversations in [inbox-sync.ts](file:///c:/Users/ogt/c2/C2/server/services/inbox-sync.ts) transition to `'unread'` on new messages.
+  - Manual or automation outbound replies in [message-sender.ts](file:///c:/Users/ogt/c2/C2/server/services/message-sender.ts) transition to `'replied'`.
+  - Viewing conversations in [Unibox.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Unibox.tsx) automatically resets unread count and marks status as `'read'`.
+- **Inbox UI Segmented Tabs**: Added `All`, `Unread`, and `Replied` filter tabs at the top of the conversation list pane in [Unibox.tsx](file:///c:/Users/ogt/c2/C2/frontend/src/pages/Unibox.tsx).
 
 ---
 
 ## Validation Results
 
-- Ran `npm run build` inside `frontend/` to confirm that all changes compile, types are valid, and there are no lint or compilation issues.
-- The build succeeded with exit code 0.
+- Both `server` and `frontend` source directories compile cleanly with no TypeScript compiler errors.
+- Built the production frontend package via `npm run build` inside `frontend/` successfully.
