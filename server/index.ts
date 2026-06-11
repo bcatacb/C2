@@ -31,6 +31,9 @@ import {
 import { sendMessage } from './services/message-sender.js'
 import { startInboxSync, stopInboxSync } from './services/inbox-sync.js'
 import { getPoolStatus, acquireSession, destroySession, pinSession, getSession } from './transport/session-pool.js'
+import {
+  listLeadLists, createLeadList, deleteLeadList, addLeadsToList, removeLeadsFromList,
+} from './services/lead-list-service.js'
 
 const app = express()
 app.use(cors())
@@ -192,6 +195,75 @@ app.post('/api/accounts/:id/disconnect', asyncH(async (req, res) => {
   res.json({ ok: true })
 }))
 
+app.post('/api/accounts/:id/scrape-followers', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const { limit = 50, listId } = req.body
+  const account = await getAccount(id)
+  if (!account) { res.status(404).json({ error: 'Account not found' }); return }
+
+  const transport = account.transport_type === 'api'
+    ? (await import('./transport/api.js')).apiTransport
+    : (await import('./transport/playwright.js')).playwrightTransport
+
+  const proxyUrl = account.proxy_id ? await getProxyUrl(account.proxy_id) : null
+  
+  const followers = await transport.scrapeFollowers(id, limit)
+  
+  const createdLeads: any[] = []
+  const { supabase: sb } = await import('./utils/supabase.js')
+
+  for (const f of followers) {
+    const normalized = f.username.trim().toLowerCase()
+    const { data: existing } = await sb
+      .from('leads')
+      .select('*')
+      .eq('username', normalized)
+      .single()
+
+    let leadId = existing?.id
+    if (existing) {
+      const tags = [...new Set([...(existing.tags || []), 'scraped_follower', ...(f.isMutual ? ['mutual_follower'] : [])])]
+      const { data: updated } = await sb
+        .from('leads')
+        .update({ tags, display_name: f.displayName || existing.display_name })
+        .eq('id', existing.id)
+        .select()
+        .single()
+      if (updated) {
+        createdLeads.push(updated)
+        leadId = updated.id
+      }
+    } else {
+      const tags = ['scraped_follower']
+      if (f.isMutual) tags.push('mutual_follower')
+      const { data: created, error: createError } = await sb
+        .from('leads')
+        .insert({
+          username: normalized,
+          display_name: f.displayName || null,
+          status: 'new',
+          tags,
+          account_id: id,
+          source: 'follower_scrape'
+        })
+        .select()
+        .single()
+      if (!createError && created) {
+        createdLeads.push(created)
+        leadId = created.id
+      }
+    }
+
+    if (listId && leadId) {
+      await sb
+        .from('lead_list_members')
+        .upsert({ list_id: listId, lead_id: leadId }, { onConflict: 'list_id,lead_id' })
+    }
+  }
+
+  res.json({ ok: true, count: followers.length, leads: createdLeads })
+}))
+
 // ── Proxies ─────────────────────────────────────────────────
 app.get('/api/proxies', asyncH(async (_req, res) => {
   const proxies = await listProxies()
@@ -330,6 +402,9 @@ app.get('/api/leads', asyncH(async (_req, res) => {
   if (query.per_page) {
     filters.per_page = parseInt(query.per_page as string)
   }
+  if (query.list_id) {
+    filters.list_id = query.list_id as string
+  }
 
   const result = await listLeads(filters)
   res.json(result)
@@ -390,6 +465,40 @@ app.post('/api/leads/bulk', asyncH(async (req, res) => {
   const result = await executeBulkAction(ids, action)
   broadcast('leads:bulk-updated', result)
   res.json(result)
+}))
+
+// ── Lead Lists / Folders ────────────────────────────────────
+app.get('/api/lists', asyncH(async (_req, res) => {
+  const lists = await listLeadLists()
+  res.json(lists)
+}))
+
+app.post('/api/lists', asyncH(async (req, res) => {
+  const { name, description } = req.body
+  const list = await createLeadList(name, description)
+  broadcast('list:created', list)
+  res.status(201).json(list)
+}))
+
+app.delete('/api/lists/:id', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  await deleteLeadList(id)
+  broadcast('list:deleted', { id })
+  res.json({ ok: true })
+}))
+
+app.post('/api/lists/:id/leads', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const { leadIds } = req.body
+  await addLeadsToList(id, leadIds)
+  res.json({ ok: true })
+}))
+
+app.post('/api/lists/:id/leads/delete', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const { leadIds } = req.body
+  await removeLeadsFromList(id, leadIds)
+  res.json({ ok: true })
 }))
 
 // ── Campaigns ───────────────────────────────────────────────

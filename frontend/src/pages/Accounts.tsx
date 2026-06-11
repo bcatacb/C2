@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { get, post, put, del } from '../lib/api'
 import { cn } from '../lib/utils'
-import { Plus, Trash2, Pencil, Wifi, WifiOff, ShieldAlert, Ban, RefreshCw, Play, Save, Square } from 'lucide-react'
+import { Plus, Trash2, Pencil, Wifi, WifiOff, ShieldAlert, Ban, RefreshCw, Play, Save, Square, Users } from 'lucide-react'
 
 interface TikTokAccount {
   id: string
@@ -47,14 +47,20 @@ export function Accounts() {
   const [loading, setLoading] = useState(true)
   const [connecting, setConnecting] = useState<Set<string>>(new Set())
   const [liveSessions, setLiveSessions] = useState<Set<string>>(new Set())
+  const [scrapeAccountId, setScrapeAccountId] = useState<string | null>(null)
+  const [scraping, setScraping] = useState(false)
+  const [scrapeForm, setScrapeForm] = useState({ limit: 50, listId: '' })
+  const [lists, setLists] = useState<any[]>([])
 
   useEffect(() => {
     Promise.all([
       get<TikTokAccount[]>('/accounts'),
       get<Proxy[]>('/proxies'),
-    ]).then(([a, p]) => {
+      get<any[]>('/lists').catch(() => []),
+    ]).then(([a, p, l]) => {
       setAccounts(a)
       setProxies(p)
+      setLists(l)
       setLoading(false)
     })
   }, [])
@@ -130,6 +136,25 @@ export function Accounts() {
     setShowAdd(false)
     setEditId(null)
     setForm({ username: '', display_name: '', transport_type: 'playwright', daily_dm_limit: 50, proxy_id: '' })
+  }
+
+  async function handleScrape() {
+    if (!scrapeAccountId) return
+    setScraping(true)
+    try {
+      const res = await post<{ ok: boolean, count: number }>(`/accounts/${scrapeAccountId}/scrape-followers`, {
+        limit: scrapeForm.limit,
+        listId: scrapeForm.listId || undefined
+      })
+      alert(`Successfully scraped ${res.count} followers!`)
+      setScrapeAccountId(null)
+      // Reload lists to get updated lead counts
+      get<any[]>('/lists').then(setLists).catch(() => {})
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Scraping failed')
+    } finally {
+      setScraping(false)
+    }
   }
 
   if (loading) return <div className="flex h-full items-center justify-center text-zinc-400">Loading...</div>
@@ -245,8 +270,21 @@ export function Accounts() {
                       <span className="text-xs text-yellow-500">cooldown</span>
                     )}
                   </div>
-                  <div className="mt-1 flex gap-4 text-xs text-zinc-500">
-                    <span>DMs: {account.dms_sent_today}/{account.daily_dm_limit}</span>
+                  <div className="mt-1 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs text-zinc-500">
+                    <div className="flex items-center gap-2">
+                      <span>DMs: {account.dms_sent_today}/{account.daily_dm_limit}</span>
+                      <div className="w-24 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-all duration-300",
+                            account.dms_sent_today >= account.daily_dm_limit ? 'bg-red-500' :
+                            account.dms_sent_today >= account.daily_dm_limit * 0.8 ? 'bg-orange-500' :
+                            'bg-blue-500'
+                          )}
+                          style={{ width: `${Math.min(100, (account.dms_sent_today / (account.daily_dm_limit || 50)) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
                     <span>Transport: {account.transport_type}</span>
                     {account.last_inbox_sync && (
                       <span>Last sync: {new Date(account.last_inbox_sync).toLocaleTimeString()}</span>
@@ -294,6 +332,18 @@ export function Accounts() {
                       )}
                     </button>
                   )}
+                  {account.status === 'connected' && !liveSessions.has(account.id) && (
+                    <button
+                      onClick={() => {
+                        setScrapeAccountId(account.id)
+                        setScrapeForm({ limit: 50, listId: '' })
+                      }}
+                      className="flex items-center gap-1 rounded bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 px-2 py-1 text-xs text-zinc-300 transition-colors"
+                      title="Scrape followers"
+                    >
+                      <Users size={12} /> Scrape
+                    </button>
+                  )}
                   <button
                     onClick={() => startEdit(account)}
                     className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
@@ -317,6 +367,65 @@ export function Accounts() {
           )}
         </div>
       </div>
+
+      {scrapeAccountId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-zinc-850 bg-zinc-900 p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-white mb-4">Scrape Followers</h2>
+            <div className="space-y-4">
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Scrape Limit (Max 200)</span>
+                <input
+                  type="number"
+                  value={scrapeForm.limit}
+                  min={1}
+                  max={200}
+                  onChange={(e) => setScrapeForm({ ...scrapeForm, limit: Math.min(200, Math.max(1, parseInt(e.target.value) || 50)) })}
+                  className="w-full rounded border border-zinc-750 bg-zinc-800 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs text-zinc-400">Add Scraped Leads to List/Folder (Optional)</span>
+                <select
+                  value={scrapeForm.listId}
+                  onChange={(e) => setScrapeForm({ ...scrapeForm, listId: e.target.value })}
+                  className="w-full rounded border border-zinc-750 bg-zinc-800 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Do not add to any list</option>
+                  {lists.map((l: any) => (
+                    <option key={l.id} value={l.id}>{l.name} ({l.lead_count || 0} leads)</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setScrapeAccountId(null)}
+                disabled={scraping}
+                className="rounded bg-zinc-800 px-4 py-2 text-sm text-zinc-350 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleScrape}
+                disabled={scraping}
+                className="flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {scraping ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    Scraping...
+                  </>
+                ) : (
+                  'Start Scrape'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

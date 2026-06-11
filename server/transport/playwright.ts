@@ -2,6 +2,7 @@ import type { Frame, Page } from 'playwright'
 import type { TikTokTransport, ConversationData, MessageData, AccountStatus } from './interface.js'
 import { acquireSession, destroySession, releaseSession } from './session-pool.js'
 import { randomDelay } from '../utils/fingerprint.js'
+import { supabase } from '../utils/supabase.js'
 
 const TIKTOK_BASE = 'https://www.tiktok.com'
 const DM_URL = `${TIKTOK_BASE}/messages`
@@ -439,6 +440,91 @@ export const playwrightTransport: TikTokTransport = {
         restricted: false,
         banned: false,
       }
+    } finally {
+      await releaseSession(accountId)
+    }
+  },
+
+  async scrapeFollowers(accountId, limit = 50) {
+    const session = await acquireSession(accountId)
+    try {
+      const page = session.context.pages()[0] || await session.context.newPage()
+      
+      const { data: account } = await supabase
+        .from('tiktok_accounts')
+        .select('username')
+        .eq('id', accountId)
+        .single()
+      
+      if (!account) throw new Error('Account not found')
+      
+      const profileUrl = `${TIKTOK_BASE}/@${account.username}`
+      console.log(`[playwright] navigating to profile: ${profileUrl}`)
+      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await randomDelay(2000, 3000)
+      await dismissCookieBanner(page)
+
+      const followersSelector = '[data-e2e="followers"], [href*="/followers"], [class*="Followers"]'
+      await page.waitForSelector(followersSelector, { timeout: 10_000 })
+      await page.click(followersSelector)
+      await randomDelay(2000, 3000)
+
+      const modalListSelector = '[class*="DivFollowListContainer"], [class*="DivUserListContainer"], [class*="FollowList"], [class*="UserList"]'
+      let items: Array<{ username: string; displayName: string | null; isMutual: boolean }> = []
+      
+      const scrollDeadline = Date.now() + 45_000
+      let lastCount = 0
+      while (items.length < limit && Date.now() < scrollDeadline) {
+        items = await page.evaluate(() => {
+          const listItems = document.querySelectorAll('[class*="ItemContainer"], [class*="ItemUser"], [class*="UserItem"], [class*="ItemUser"]')
+          const results: Array<{ username: string; displayName: string | null; isMutual: boolean }> = []
+          
+          listItems.forEach(el => {
+            const handleEl = el.querySelector('[class*="UniqueId"], [class*="username"], a[href*="/@"]')
+            const nameEl = el.querySelector('[class*="Nickname"]')
+            const btnEl = el.querySelector('button')
+            
+            let username = ''
+            if (handleEl) {
+              const href = handleEl.getAttribute('href') || ''
+              const match = href.match(/@([a-zA-Z0-9_\.]+)/)
+              username = match ? match[1] : handleEl.textContent?.trim().replace(/^@/, '') || ''
+            }
+            
+            if (!username) return
+            
+            const btnText = btnEl?.textContent?.trim().toLowerCase() || ''
+            const isMutual = btnText.includes('friends') || btnText.includes('message') || btnText.includes('following')
+            
+            results.push({
+              username,
+              displayName: nameEl?.textContent?.trim() || null,
+              isMutual
+            })
+          })
+          
+          return results
+        })
+
+        if (items.length >= limit || items.length === lastCount) {
+          if (items.length === lastCount) break
+        }
+        
+        lastCount = items.length
+        
+        await page.evaluate((sel) => {
+          const list = document.querySelector(sel)
+          if (list) {
+            const scrollable = list.closest('[class*="scroll"], [class*="Scroll"]') || list.parentElement || list
+            scrollable.scrollBy(0, 400)
+          }
+        }, modalListSelector)
+        
+        await new Promise(r => setTimeout(r, 1200 + Math.random() * 500))
+      }
+
+      console.log(`[playwright] scraped ${items.length} followers for ${account.username}`)
+      return items.slice(0, limit)
     } finally {
       await releaseSession(accountId)
     }

@@ -35,6 +35,9 @@ async function upsertConversation(accountId: string, conv: ConversationData) {
       updates.last_message_at = conv.lastMessageAt?.toISOString() ?? new Date().toISOString()
       updates.last_message_direction = conv.lastMessageDirection
       updates.unread_count = (existing.unread_count || 0) + conv.unreadCount
+      if (conv.unreadCount > 0) {
+        updates.status = 'unread'
+      }
     }
     const { data } = await supabase
       .from('conversations')
@@ -56,6 +59,7 @@ async function upsertConversation(accountId: string, conv: ConversationData) {
       last_message_at: conv.lastMessageAt?.toISOString(),
       last_message_direction: conv.lastMessageDirection,
       unread_count: conv.unreadCount,
+      status: conv.unreadCount > 0 ? 'unread' : 'read',
     })
     .select()
     .single()

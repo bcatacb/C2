@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { get, post } from '../lib/api'
+import { get, post, del } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn } from '../lib/utils'
 import { CSVUploadModal } from '../components/CSVUploadModal'
@@ -15,6 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Folder,
+  FolderOpen,
 } from 'lucide-react'
 
 // --- Types ---
@@ -79,6 +81,10 @@ export function Leads() {
   const [total, setTotal] = useState(0)
   const perPage = 50
 
+  // Lists/Folders
+  const [lists, setLists] = useState<any[]>([])
+  const [selectedListId, setSelectedListId] = useState<string>('')
+
   // Filters
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterTag, setFilterTag] = useState<string>('')
@@ -109,16 +115,23 @@ export function Leads() {
     if (filterTag) params.set('tags', filterTag)
     if (filterAccount) params.set('account_id', filterAccount)
     if (debouncedSearch) params.set('search', debouncedSearch)
+    if (selectedListId) params.set('list_id', selectedListId)
 
     const result = await get<PaginatedLeads>(`/leads?${params.toString()}`)
     setLeads(result.data)
     setTotal(result.total)
     setTotalPages(result.total_pages)
-  }, [page, filterStatus, filterTag, filterAccount, debouncedSearch])
+  }, [page, filterStatus, filterTag, filterAccount, debouncedSearch, selectedListId])
+
+  const fetchLists = useCallback(async () => {
+    const data = await get<any[]>('/lists').catch(() => [])
+    setLists(data)
+  }, [])
 
   useEffect(() => {
     get<TikTokAccount[]>('/accounts').then(setAccounts).catch(() => {})
-  }, [])
+    fetchLists()
+  }, [fetchLists])
 
   useEffect(() => {
     setLoading(true)
@@ -144,16 +157,19 @@ export function Leads() {
         msg.event === 'leads:created' ||
         msg.event === 'leads:updated' ||
         msg.event === 'leads:deleted' ||
-        msg.event === 'leads:bulk-updated'
+        msg.event === 'leads:bulk-updated' ||
+        msg.event === 'list:created' ||
+        msg.event === 'list:deleted'
       ) {
         fetchLeads()
+        fetchLists()
       }
     })
     return () => {
       unsub()
       disconnectWs()
     }
-  }, [fetchLeads])
+  }, [fetchLeads, fetchLists])
 
   // --- Selection ---
 
@@ -273,6 +289,67 @@ export function Leads() {
     }
   }
 
+  async function handleCreateList() {
+    const name = prompt('Enter folder/list name:')
+    if (!name) return
+    const desc = prompt('Enter description (optional):') || ''
+    try {
+      await post('/lists', { name, description: desc })
+      fetchLists()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create list')
+    }
+  }
+
+  async function handleDeleteList(id: string) {
+    if (!confirm('Are you sure you want to delete this folder? Leads inside will not be deleted.')) return
+    try {
+      await del(`/lists/${id}`)
+      if (selectedListId === id) {
+        setSelectedListId('')
+      }
+      fetchLists()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete list')
+    }
+  }
+
+  async function handleBulkAddToList() {
+    if (lists.length === 0) {
+      alert('Create a folder first using the sidebar plus button.')
+      return
+    }
+    const listNames = lists.map(l => l.name).join(', ')
+    const nameInput = prompt(`Enter folder name to add leads to (options: ${listNames}):`)
+    if (!nameInput) return
+    const matched = lists.find(l => l.name.toLowerCase() === nameInput.toLowerCase().trim())
+    if (!matched) {
+      alert(`Could not find folder matching "${nameInput}"`)
+      return
+    }
+    try {
+      await post(`/lists/${matched.id}/leads`, { leadIds: Array.from(selectedIds) })
+      setSelectedIds(new Set())
+      fetchLists()
+      fetchLeads()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add leads to folder')
+    }
+  }
+
+  async function handleBulkRemoveFromList() {
+    if (!selectedListId) return
+    if (!confirm(`Remove ${selectedIds.size} lead(s) from this folder?`)) return
+    try {
+      await post(`/lists/${selectedListId}/leads/delete`, { leadIds: Array.from(selectedIds) })
+      setSelectedIds(new Set())
+      fetchLists()
+      fetchLeads()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to remove leads from folder')
+    }
+  }
+
   // --- Render ---
 
   if (loading && leads.length === 0) {
@@ -280,7 +357,66 @@ export function Leads() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-64 border-r border-zinc-800 bg-zinc-950 flex flex-col shrink-0">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-4">
+          <h2 className="text-xs font-semibold text-zinc-400 tracking-wider uppercase">Folders / Lists</h2>
+          <button
+            onClick={handleCreateList}
+            className="p-1 rounded text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            title="Create list"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <button
+            onClick={() => { setSelectedListId(''); setPage(1); }}
+            className={cn(
+              "w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors",
+              selectedListId === '' ? 'bg-blue-600/15 text-blue-400 border border-blue-500/20' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+            )}
+          >
+            <FolderOpen size={16} />
+            <span className="flex-1 text-left font-medium">All Leads</span>
+          </button>
+          
+          {lists.map(list => (
+            <div
+              key={list.id}
+              className={cn(
+                "group w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors",
+                selectedListId === list.id ? 'bg-blue-600/15 text-blue-400 border border-blue-500/20' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+              )}
+            >
+              <button
+                onClick={() => { setSelectedListId(list.id); setPage(1); }}
+                className="flex-1 flex items-center gap-2 text-left min-w-0"
+              >
+                <Folder size={16} className="shrink-0" />
+                <span className="truncate font-medium">{list.name}</span>
+              </button>
+              
+              <span className="text-xs bg-zinc-800 px-1.5 py-0.5 rounded-md text-zinc-500 group-hover:hidden">
+                {list.lead_count || 0}
+              </span>
+              
+              <button
+                onClick={() => handleDeleteList(list.id)}
+                className="hidden group-hover:block p-0.5 text-zinc-500 hover:text-red-400 rounded hover:bg-zinc-800"
+                title="Delete list"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
         <div>
@@ -327,6 +463,22 @@ export function Leads() {
           >
             <Filter size={12} /> Status
           </button>
+          <button
+            onClick={handleBulkAddToList}
+            className="flex items-center gap-1 rounded bg-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-600"
+            title="Add to Folder"
+          >
+            <Folder size={12} /> Add to Folder
+          </button>
+          {selectedListId && (
+            <button
+              onClick={handleBulkRemoveFromList}
+              className="flex items-center gap-1 rounded bg-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-600"
+              title="Remove from Folder"
+            >
+              <FolderOpen size={12} /> Remove from Folder
+            </button>
+          )}
           <button
             onClick={handleBulkDelete}
             className="flex items-center gap-1 rounded bg-red-600/20 px-3 py-1 text-xs text-red-400 hover:bg-red-600/30"
@@ -555,6 +707,7 @@ export function Leads() {
       {showCSVModal && (
         <CSVUploadModal onClose={() => setShowCSVModal(false)} onImported={() => { setShowCSVModal(false); fetchLeads() }} />
       )}
+      </div>
     </div>
   )
 }

@@ -29,4 +29,6 @@ export interface TikTokTransport {
   fetchMessages(accountId: string, peerUsername: string, since?: Date): Promise<MessageData[]>
   sendMessage(accountId: string, peerUsername: string, body: string): Promise<MessageData>
   getAccountStatus(accountId: string): Promise<AccountStatus>
+  scrapeFollowers(accountId: string, limit?: number): Promise<Array<{ username: string; displayName: string | null; isMutual: boolean }>>
 }
+

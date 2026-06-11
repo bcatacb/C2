@@ -38,6 +38,7 @@ export async function sendMessage(accountId: string, peerUsername: string, body:
         last_message_text: body,
         last_message_at: sent.sentAt.toISOString(),
         last_message_direction: 'outbound',
+        status: 'replied',
       })
       .select()
       .single()
@@ -49,6 +50,7 @@ export async function sendMessage(accountId: string, peerUsername: string, body:
         last_message_text: body,
         last_message_at: sent.sentAt.toISOString(),
         last_message_direction: 'outbound',
+        status: 'replied',
       })
       .eq('id', conversationId)
   }

@@ -24,4 +24,9 @@ export const apiTransport: TikTokTransport = {
   async getAccountStatus(_accountId): Promise<AccountStatus> {
     throw new Error('TikTok Business API transport not yet implemented')
   },
+  
+  async scrapeFollowers(_accountId, _limit): Promise<Array<{ username: string; displayName: string | null; isMutual: boolean }>> {
+    throw new Error('TikTok Business API transport not yet implemented')
+  },
 }
+

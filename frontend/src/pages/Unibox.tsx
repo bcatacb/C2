@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { get, post, put } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn, timeAgo } from '../lib/utils'
-import { Send, Archive, ArchiveRestore, Check, Filter, ChevronDown, ChevronRight, X, Download } from 'lucide-react'
+import { Send, Archive, ArchiveRestore, Check, ChevronDown, ChevronRight, X, Download, Folder } from 'lucide-react'
 
 interface TikTokAccount {
   id: string
@@ -24,6 +24,7 @@ interface Conversation {
   archived: boolean
   labels: string[]
   pipeline_stage_id: string | null
+  status: 'unread' | 'read' | 'replied'
 }
 
 interface Note {
@@ -66,7 +67,7 @@ export function Unibox() {
   const [replyText, setReplyText] = useState('')
   const [sending, setSending] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
-  const [unreadOnly, setUnreadOnly] = useState(false)
+  const [tabFilter, setTabFilter] = useState<'all' | 'unread' | 'replied'>('all')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Notes state (7.1)
@@ -156,10 +157,10 @@ export function Unibox() {
     // Fetch notes for this conversation
     get<Note[]>(`/conversations/${conv.id}/notes`).then(setNotes).catch(() => setNotes([]))
 
-    if (conv.unread_count > 0) {
-      await put(`/conversations/${conv.id}`, { unread_count: 0 })
+    if (conv.unread_count > 0 || conv.status === 'unread') {
+      await put(`/conversations/${conv.id}`, { unread_count: 0, status: 'read' })
       setConversations((prev) =>
-        prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c))
+        prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0, status: 'read' } : c))
       )
     }
   }
@@ -257,11 +258,59 @@ export function Unibox() {
     }
   }
 
+  async function handleAddConvToFolder() {
+    if (!selectedConv) return
+    const username = selectedConv.peer_username
+    
+    const listsData = await get<any[]>('/lists').catch(() => [])
+    if (listsData.length === 0) {
+      alert('Create a folder first in the Leads page.')
+      return
+    }
+
+    const listNames = listsData.map((l: any) => l.name).join(', ')
+    const folderName = prompt(`Enter folder name to add @${username} to (options: ${listNames}):`)
+    if (!folderName) return
+
+    const matched = listsData.find((l: any) => l.name.toLowerCase() === folderName.toLowerCase().trim())
+    if (!matched) {
+      alert(`Folder "${folderName}" not found.`)
+      return
+    }
+
+    try {
+      let lead: any = null
+      const leadsRes = await get<any>(`/leads?search=${username}`)
+      const existing = (leadsRes?.data || []).find((l: any) => l.username.toLowerCase() === username.toLowerCase())
+      
+      if (existing) {
+        lead = existing
+      } else {
+        lead = await post('/leads', {
+          username: username,
+          display_name: selectedConv.peer_display_name || undefined,
+          source: 'inbox',
+          status: 'new'
+        })
+      }
+
+      await post(`/lists/${matched.id}/leads`, { leadIds: [lead.id] })
+      alert(`Added @${username} to folder "${matched.name}".`)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add to folder')
+    }
+  }
+
   const accountMap = new Map(accounts.map((a) => [a.id, a]))
 
   const filteredConvs = conversations.filter((c) => {
     if (selectedAccounts.size > 0 && !selectedAccounts.has(c.account_id)) return false
-    if (unreadOnly && c.unread_count === 0) return false
+    if (tabFilter === 'unread') {
+      return c.status === 'unread' || c.unread_count > 0
+    }
+    if (tabFilter === 'replied') {
+      return c.status === 'replied'
+    }
     return true
   })
 
@@ -301,12 +350,6 @@ export function Unibox() {
         </div>
         <div className="border-t border-zinc-800 p-2 space-y-1">
           <button
-            onClick={() => setUnreadOnly(!unreadOnly)}
-            className={cn('flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs', unreadOnly ? 'text-blue-400' : 'text-zinc-500')}
-          >
-            <Filter size={12} /> Unread only
-          </button>
-          <button
             onClick={() => setShowArchived(!showArchived)}
             className={cn('flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs', showArchived ? 'text-blue-400' : 'text-zinc-500')}
           >
@@ -339,6 +382,28 @@ export function Unibox() {
           >
             <Download size={12} /> To Leads
           </button>
+        </div>
+        
+        {/* Status filter tabs */}
+        <div className="flex border-b border-zinc-800 bg-zinc-950 p-1 gap-1">
+          {(['all', 'unread', 'replied'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => {
+                setTabFilter(tab)
+                setSelectedConvId(null)
+                setMessages([])
+              }}
+              className={cn(
+                "flex-1 py-1 text-center text-[11px] font-medium rounded capitalize transition-colors",
+                tabFilter === tab
+                  ? 'bg-zinc-800 text-white'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              )}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
         <div className="flex-1 overflow-y-auto">
           {filteredConvs.map((conv) => {
@@ -419,13 +484,22 @@ export function Unibox() {
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => toggleArchive(selectedConv)}
-                className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                title={selectedConv.archived ? 'Unarchive' : 'Archive'}
-              >
-                {selectedConv.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-              </button>
+              <div className="flex gap-1.5 items-center">
+                <button
+                  onClick={handleAddConvToFolder}
+                  className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                  title="Add to Folder/List"
+                >
+                  <Folder size={16} />
+                </button>
+                <button
+                  onClick={() => toggleArchive(selectedConv)}
+                  className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                  title={selectedConv.archived ? 'Unarchive' : 'Archive'}
+                >
+                  {selectedConv.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                </button>
+              </div>
             </div>
 
             {/* 7.3 - Labels section */}

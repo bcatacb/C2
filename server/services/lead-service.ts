@@ -27,6 +27,7 @@ export interface LeadFilters {
   created_before?: string
   page?: number
   per_page?: number
+  list_id?: string
 }
 
 export interface CreateLeadInput {
@@ -157,6 +158,25 @@ export async function listLeads(filters: LeadFilters): Promise<PaginatedResult<L
   let query = supabase.from('leads').select('*', { count: 'exact' })
 
   // Apply filters
+  if (filters.list_id) {
+    const { data: members, error: memError } = await supabase
+      .from('lead_list_members')
+      .select('lead_id')
+      .eq('list_id', filters.list_id)
+    if (memError) throw new Error(memError.message)
+    const leadIds = (members || []).map(m => m.lead_id)
+    if (leadIds.length === 0) {
+      return {
+        data: [],
+        total: 0,
+        page,
+        per_page: perPage,
+        total_pages: 0,
+      }
+    }
+    query = query.in('id', leadIds)
+  }
+
   if (filters.status) {
     const statuses = Array.isArray(filters.status) ? filters.status : [filters.status]
     query = query.in('status', statuses)

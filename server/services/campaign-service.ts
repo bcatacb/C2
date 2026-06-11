@@ -257,9 +257,7 @@ export async function activateCampaign(id: string): Promise<Campaign> {
     throw new Error('Campaign must have at least one step to be activated')
   }
 
-  if (!campaign.assigned_account_ids || campaign.assigned_account_ids.length === 0) {
-    throw new Error('Campaign must have at least one assigned account to be activated')
-  }
+  // Fall back to auto-rotation of all connected accounts if no specific accounts are assigned
 
   const { data, error } = await supabase
     .from('campaigns')

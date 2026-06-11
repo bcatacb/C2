@@ -74,7 +74,9 @@ export async function processCampaign(campaign: Campaign): Promise<void> {
 
     // Step 3: Get account capacities
     const accountCapacities = await getAccountCapacities(campaign.assigned_account_ids)
-    const availableAccounts = accountCapacities.filter(a => a.remaining > 0)
+    const availableAccounts = accountCapacities
+      .filter(a => a.remaining > 0)
+      .sort((a, b) => a.sent - b.sent)
 
     if (availableAccounts.length === 0) return
 
@@ -220,13 +222,16 @@ async function getActionableLeads(campaign: Campaign): Promise<CampaignLead[]> {
 
 async function getAccountCapacities(
   accountIds: string[]
-): Promise<Array<{ id: string; remaining: number }>> {
-  if (accountIds.length === 0) return []
-
-  const { data, error } = await supabase
+): Promise<Array<{ id: string; remaining: number; sent: number }>> {
+  let query = supabase
     .from('tiktok_accounts')
     .select('id, daily_dm_limit, dms_sent_today, status, cooldown_until')
-    .in('id', accountIds)
+
+  if (accountIds && accountIds.length > 0) {
+    query = query.in('id', accountIds)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     console.error('[campaign-worker] failed to fetch account capacities:', error.message)
@@ -241,6 +246,7 @@ async function getAccountCapacities(
     .map((a: { id: string; daily_dm_limit: number; dms_sent_today: number }) => ({
       id: a.id,
       remaining: Math.max(0, a.daily_dm_limit - a.dms_sent_today),
+      sent: a.dms_sent_today,
     }))
 }
 
