@@ -42,6 +42,7 @@ A total of 11 critical bug fixes and user experience (UX) enhancements were appl
 * **Fix #9: Account & Stage Dropdowns for Automation**: Replaced manual textbox fields (which required users to paste long, complex UUIDs) with user-friendly dropdown lists that display TikTok usernames and pipeline stage names.
 * **Fix #10: Handle Lookup for Bulk Assignment**: Bulk assignment now accepts standard TikTok handle formats (e.g. `@deadbread101` or `deadbread101`) and dynamically matches them to database UUIDs.
 * **Fix #11: Clean Production Builds**: Resolved unused import compiler warnings on the Pipeline and Campaign pages to ensure `npm run build` compiles with zero errors.
+* **Fix #12: Dynamic Backend Server Routing**: Added a new input field to the Login and Settings views to dynamically point the frontend UI to any custom remote C2 backend server. The backend URL is saved to `localStorage`, allowing the frontend to be deployed as a static web application on Netlify/Vercel while querying your remote servers.
 
 ---
 
@@ -108,6 +109,9 @@ A local helper utility has been created at `server/scripts/remote-login.js` ([re
    ```
 3. A headed browser will launch locally. **Log in to TikTok** (scan QR code, enter password, and solve security captchas).
 4. Once you are logged in, the script will automatically capture the session state, close the local browser, and POST the valid session data back to the remote server, changing the account status to **connected**.
+
+### Static Webpage Frontend Deployments
+C2's frontend can now be hosted entirely as a static webpage on Vercel, Netlify, or GitHub Pages. Once deployed, users can configure the application to target their remote backend server directly from the Login page or Settings page. This eliminates the need to run the frontend code on your remote VPS, reducing resource consumption on the server.
 
 > [!WARNING]
 > Storing session cookies exposes active access. Ensure that your remote server's port (default `4000`) is secured (e.g., behind a firewall, VPN, or reverse proxy with authentication) to prevent unauthorized API requests.

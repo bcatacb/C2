@@ -49,13 +49,29 @@ cd frontend && npx vite --host
 
 ## Adding a TikTok Account
 
-1. Go to **Accounts** page → **Add Account** → enter the TikTok username
-2. Click **Connect** — this opens a headless Playwright browser to TikTok's login page
-3. Complete login + 2FA on TikTok (the browser session is pinned so it won't timeout)
-4. Click **Save Session** — cookies are saved to the database
-5. The account will now sync DMs automatically every 30 seconds
+### Method A: Local Setup (Headed)
+1. Go to **Accounts** page → **Add Account** → enter the TikTok username.
+2. Click **Connect** — this opens a headed Playwright browser to TikTok's login page (if `HEADED_MODE=true` in `.env`).
+3. Complete login + 2FA on TikTok.
+4. Click **Save Session** — cookies are saved to the database.
 
-## How It Works
+### Method B: Remote Setup (Headless VPS)
+If the C2 server is running headlessly on a remote VPS:
+1. Copy `server/scripts/remote-login.js` ([remote-login.js](file:///c:/Users/ogt/c2/C2/server/scripts/remote-login.js)) to your local computer.
+2. Run `npm install playwright` locally.
+3. Run the script:
+   ```bash
+   node remote-login.js <YOUR_REMOTE_C2_URL> <ACCOUNT_ID>
+   ```
+4. Log in manually in the local browser that pops up. The script will automatically capture the logged-in cookies and upload them directly to your remote C2 server.
+
+---
+
+## Static Web Page Hosting
+The React frontend can be hosted independently as a static web application (e.g., on Vercel, Netlify, or GitHub Pages) and pointed to any remote C2 backend. 
+* Simply open your deployed static webpage, enter your C2 backend's remote URL in the Login or Settings screen, and log in. The UI will dynamically route all API/WebSocket requests to your VPS backend.
+
+---
 
 ### Architecture
 ```

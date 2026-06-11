@@ -330,6 +330,35 @@ Requires a `.env` file in the project root. The backend container includes Chrom
 
 ---
 
+## Static Web Hosting Deployment
+
+C2's frontend can be hosted independently of the backend as a static webpage on Vercel, Netlify, or GitHub Pages:
+
+1. Build the frontend locally:
+   ```bash
+   cd frontend
+   npm run build
+   ```
+2. Upload/deploy the output `frontend/dist/` directory to Vercel, Netlify, or AWS S3.
+3. Open the hosted URL in your browser. On the Login screen, enter your remote C2 Backend Server URL (e.g. `http://12.34.56.78:4000`).
+4. Sign in with your credentials. The frontend will dynamically query your remote C2 backend.
+
+---
+
+## Remote Headless Account Connection
+
+When running C2 on a remote VPS without a graphical environment, use the `remote-login.js` utility to connect accounts:
+
+1. Copy `server/scripts/remote-login.js` to your local computer.
+2. Run `npm install playwright` locally.
+3. Execute the script:
+   ```bash
+   node remote-login.js <YOUR_REMOTE_C2_URL> <ACCOUNT_ID>
+   ```
+4. Log in to TikTok in the browser window that opens. The script will automatically capture and upload the session state to your remote C2 server, setting the status to "connected".
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |
@@ -338,5 +367,6 @@ Requires a `.env` file in the project root. The backend container includes Chrom
 | Login fails silently | Check the browser console for errors. Verify the backend is running on port 4000 |
 | `ECONNREFUSED` on frontend | The backend isn't running. Start it first with `npx tsx index.ts` in the server directory |
 | Playwright browser fails to launch | Run `npx playwright install chromium` in the server directory |
-| Accounts stuck as "disconnected" | The account needs a valid TikTok session. Log in manually via headed mode (`HEADED_MODE=true`) to capture cookies |
+| Accounts stuck as "disconnected" | The account needs a valid TikTok session. Log in manually via headed mode (`HEADED_MODE=true`) or use the `remote-login.js` script to capture cookies |
 | Rate limit / cooldown | The account entered exponential backoff. Wait for `cooldown_until` to expire, or reset it in Supabase |
+

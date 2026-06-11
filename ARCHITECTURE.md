@@ -119,6 +119,12 @@ A `setInterval` ticker runs every 30 seconds (configurable). Each tick:
 
 The sync is disabled by default (`ENABLE_INBOX_SYNC=false`) so the server can start without immediately launching browsers.
 
+### 8. Dynamic Backend Server Routing & Remote Logins
+
+To support flexible deployments (such as hosting the frontend as a static web application on Vercel/Netlify while the backend runs on a remote headless VPS), the system incorporates:
+- **Local Storage Base Routing**: The frontend `api.ts` and `ws.ts` look for `c2_backend_url` in the browser's `localStorage`. If present, all HTTP REST APIs and WebSocket connections are routed directly to the custom remote IP/domain, enabling the webpage to operate independently of backend server co-location.
+- **Headed Remote Session Capturing (`remote-login.js`)**: Since headless servers cannot display the TikTok QR/captcha login screen, a standalone local login script executes a headed browser locally. Once login is completed by the user, the script exports the storage state (cookies) and uploads them directly to the remote server's database via the `PUT /api/accounts/:id` endpoint.
+
 ---
 
 ## Database Schema
