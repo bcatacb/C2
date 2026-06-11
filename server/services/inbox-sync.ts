@@ -59,6 +59,17 @@ async function upsertConversation(accountId: string, conv: ConversationData) {
     })
     .select()
     .single()
+
+  // Auto-create a lead from this new inbound contact (skip group chats)
+  if (data && !isGroupChat(conv.peerUsername)) {
+    const { createLead } = await import('./lead-service.js')
+    createLead({
+      username: conv.peerUsername,
+      display_name: conv.peerDisplayName || undefined,
+      source: 'inbox',
+    }).catch(() => { /* already exists or invalid username — that's fine */ })
+  }
+
   return data
 }
 
@@ -90,9 +101,17 @@ async function upsertMessages(accountId: string, conversationId: string, message
   return inserted
 }
 
+// Group chats have spaces or apostrophes in their names and can't be
+// treated as individual TikTok usernames.
+function isGroupChat(peerUsername: string): boolean {
+  return peerUsername.includes(' ') || peerUsername.includes("'")
+}
+
 async function detectCampaignReplies(accountId: string, conversations: ConversationData[]): Promise<void> {
   for (const conv of conversations) {
     if (conv.unreadCount <= 0) continue
+    // Skip group chats — they don't map to individual leads
+    if (isGroupChat(conv.peerUsername)) continue
 
     // Find a lead with matching username
     const { data: lead } = await supabase
@@ -142,6 +161,10 @@ async function runAutomation(
 ): Promise<void> {
   for (const conv of conversations) {
     if (conv.unreadCount <= 0) continue
+    // Skip group chats — automation rules only apply to 1:1 conversations
+    if (isGroupChat(conv.peerUsername)) continue
+    // Skip if the last message was outbound (we sent it — don't reply to ourselves)
+    if (conv.lastMessageDirection === 'outbound') continue
 
     const record = convRecords.get(conv.peerUsername)
     if (!record) continue
@@ -240,8 +263,8 @@ async function syncAccount(account: TikTokAccount): Promise<void> {
       console.log(`[sync] ${account.username} entered cooldown step ${cd.step}`)
     }
 
-    if (message.includes('login') || message.includes('session')) {
-      await updateAccount(account.id, { status: 'disconnected' } as Partial<TikTokAccount>)
+    if (message.includes('login') || message.includes('session') || message.includes('not logged in')) {
+      await updateAccount(account.id, { status: 'disconnected', session_data: null } as Partial<TikTokAccount>)
     }
   }
 }

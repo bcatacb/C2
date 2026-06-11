@@ -46,7 +46,6 @@ interface TikTokAccount {
 // --- Component ---
 
 export function Pipeline() {
-  const [stages, setStages] = useState<PipelineStage[]>([])
   const [grouped, setGrouped] = useState<PipelineGroupedConversations | null>(null)
   const [accounts, setAccounts] = useState<TikTokAccount[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,11 +57,7 @@ export function Pipeline() {
   groupedRef.current = grouped
 
   const fetchData = useCallback(async () => {
-    const [stagesData, pipelineData] = await Promise.all([
-      get<PipelineStage[]>('/pipeline-stages'),
-      get<PipelineGroupedConversations>('/conversations/pipeline'),
-    ])
-    setStages(stagesData)
+    const pipelineData = await get<PipelineGroupedConversations>('/conversations/pipeline')
     setGrouped(pipelineData)
   }, [])
 

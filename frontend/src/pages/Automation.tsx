@@ -35,6 +35,11 @@ interface RuleAction {
   message?: string
 }
 
+interface TikTokAccount {
+  id: string
+  username: string
+}
+
 // --- Trigger type badge colors ---
 
 const triggerColors: Record<string, string> = {
@@ -224,6 +229,13 @@ function CreateRuleForm({ onCreated, onCancel }: { onCreated: () => void; onCanc
   const [actions, setActions] = useState<RuleAction[]>([{ type: 'auto_reply' }])
   const [priority, setPriority] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const [accounts, setAccounts] = useState<TikTokAccount[]>([])
+  const [stages, setStages] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    get<TikTokAccount[]>('/accounts').then(setAccounts).catch(() => {})
+    get<{ id: string; name: string }[]>('/pipeline-stages').then(setStages).catch(() => {})
+  }, [])
 
   function addAction() {
     setActions((prev) => [...prev, { type: 'auto_reply' }])
@@ -347,7 +359,7 @@ function CreateRuleForm({ onCreated, onCancel }: { onCreated: () => void; onCanc
                   </button>
                 )}
               </div>
-              <ActionFields action={action} onChange={(updates) => updateAction(i, updates)} />
+              <ActionFields action={action} onChange={(updates) => updateAction(i, updates)} accounts={accounts} stages={stages} />
             </div>
           ))}
         </div>
@@ -386,7 +398,17 @@ function CreateRuleForm({ onCreated, onCancel }: { onCreated: () => void; onCanc
 
 // --- Action Fields (type-specific inputs) ---
 
-function ActionFields({ action, onChange }: { action: RuleAction; onChange: (updates: Partial<RuleAction>) => void }) {
+function ActionFields({
+  action,
+  onChange,
+  accounts,
+  stages
+}: {
+  action: RuleAction
+  onChange: (updates: Partial<RuleAction>) => void
+  accounts: TikTokAccount[]
+  stages: { id: string; name: string }[]
+}) {
   switch (action.type) {
     case 'auto_reply':
       return (
@@ -400,12 +422,16 @@ function ActionFields({ action, onChange }: { action: RuleAction; onChange: (upd
       )
     case 'move_to_stage':
       return (
-        <input
+        <select
           value={action.stage_id || ''}
           onChange={(e) => onChange({ stage_id: e.target.value })}
-          placeholder="Stage ID"
           className="w-full rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white"
-        />
+        >
+          <option value="">Select a stage...</option>
+          {stages.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
       )
     case 'add_label':
       return (
@@ -418,12 +444,16 @@ function ActionFields({ action, onChange }: { action: RuleAction; onChange: (upd
       )
     case 'assign_account':
       return (
-        <input
+        <select
           value={action.account_id || ''}
           onChange={(e) => onChange({ account_id: e.target.value })}
-          placeholder="Account ID"
           className="w-full rounded border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white"
-        />
+        >
+          <option value="">Select an account...</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>@{a.username}</option>
+          ))}
+        </select>
       )
     case 'notify':
       return (
@@ -451,10 +481,11 @@ function LogTab() {
 
   const fetchLog = useCallback(async (p: number) => {
     try {
-      const offset = (p - 1) * limit
-      const result = await get<AutomationLogEntry[]>(`/automation-log?limit=${limit}&offset=${offset}`)
-      setEntries(result)
-      setHasMore(result.length === limit)
+      const result = await get<{ data: AutomationLogEntry[]; total_pages: number }>(
+        `/automation-log?page=${p}&per_page=${limit}`
+      )
+      setEntries(result.data || [])
+      setHasMore(p < result.total_pages)
     } catch {
       // ignore
     }
@@ -499,9 +530,16 @@ function LogTab() {
                   </td>
                   <td className="py-2 pr-4">
                     <div className="flex flex-wrap gap-1">
-                      {entry.actions_taken.map((action, i) => (
-                        <span key={i} className="rounded bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300">
-                          {action}
+                      {(entry.actions_taken || []).map((action: any, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            'rounded px-2 py-0.5 text-xs font-medium',
+                            action.success ? 'bg-zinc-700 text-zinc-300' : 'bg-red-500/20 text-red-400'
+                          )}
+                          title={action.error}
+                        >
+                          {action.type || String(action)}
                         </span>
                       ))}
                     </div>

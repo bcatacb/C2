@@ -611,9 +611,11 @@ app.post('/api/automation-rules/:id/toggle', asyncH(async (req, res) => {
 
 app.get('/api/automation-log', asyncH(async (req, res) => {
   const query = req.query
+  const page = parseInt(query.page as string) || 1
+  const per_page = parseInt(query.per_page as string) || 20
   const result = await getAutomationLog({
-    page: parseInt(query.page as string),
-    per_page: parseInt(query.per_page as string),
+    page,
+    per_page,
   })
   res.json(result)
 }))
@@ -688,9 +690,11 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist')
 app.use(express.static(frontendDist))
-app.get('*', (_req, res) => {
+app.get('*splat', (_req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'))
 })
+
+import { resetDailyCounts } from './services/account-manager.js'
 
 // ── Start ───────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || '4000')
@@ -702,4 +706,32 @@ server.listen(PORT, () => {
   if (process.env.ENABLE_CAMPAIGN_WORKER === 'true') {
     startCampaignWorker()
   }
+
+  // ── Daily DM counter reset ──────────────────────────────
+  // Reset dms_sent_today for all accounts every day at midnight.
+  // Without this the daily limit counter grows forever and blocks campaigns.
+  function scheduleDailyReset() {
+    const now = new Date()
+    const midnight = new Date(now)
+    midnight.setHours(24, 0, 0, 0) // next midnight
+    const msUntilMidnight = midnight.getTime() - now.getTime()
+    setTimeout(async () => {
+      try {
+        await resetDailyCounts()
+        console.log('[server] daily DM counts reset')
+      } catch (err) {
+        console.error('[server] failed to reset daily DM counts:', err)
+      }
+      setInterval(async () => {
+        try {
+          await resetDailyCounts()
+          console.log('[server] daily DM counts reset')
+        } catch (err) {
+          console.error('[server] failed to reset daily DM counts:', err)
+        }
+      }, 24 * 60 * 60 * 1000)
+    }, msUntilMidnight)
+    console.log(`[server] daily DM reset scheduled in ${Math.round(msUntilMidnight / 60000)}m`)
+  }
+  scheduleDailyReset()
 })

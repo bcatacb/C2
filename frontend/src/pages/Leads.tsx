@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { get, post, put, del } from '../lib/api'
+import { get, post } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn } from '../lib/utils'
 import { CSVUploadModal } from '../components/CSVUploadModal'
@@ -226,12 +226,27 @@ export function Leads() {
   }
 
   async function handleBulkAssign() {
-    const accountId = prompt('Enter account ID to assign (or leave empty to unassign):')
-    if (accountId === null) return
+    const usernamesList = accounts.map(a => `@${a.username}`).join(', ')
+    const input = prompt(
+      `Enter TikTok username to assign (options: ${usernamesList}) or leave empty to unassign:`
+    )
+    if (input === null) return
+
+    let accountId: string | null = null
+    if (input.trim()) {
+      const cleanInput = input.trim().replace(/^@/, '').toLowerCase()
+      const matched = accounts.find(a => a.username.toLowerCase() === cleanInput)
+      if (!matched) {
+        alert(`Could not find account with username "${input}"`)
+        return
+      }
+      accountId = matched.id
+    }
+
     try {
       await post('/leads/bulk', {
         ids: Array.from(selectedIds),
-        action: { type: 'assign', account_id: accountId || null },
+        action: { type: 'assign', account_id: accountId },
       })
       setSelectedIds(new Set())
       fetchLeads()

@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext } from 'playwright'
 import { chromium } from 'playwright'
 import { generateFingerprint } from '../utils/fingerprint.js'
+import { supabase } from '../utils/supabase.js'
 
 interface PooledSession {
   accountId: string
@@ -30,7 +31,7 @@ function startIdleReaper() {
   idleTimer = setInterval(() => {
     const now = Date.now()
     for (const [id, session] of activeSessions) {
-      if (!session.pinned && now - session.lastUsed > IDLE_TIMEOUT) {
+      if (!session.pinned && !session.busy && now - session.lastUsed > IDLE_TIMEOUT) {
         console.log(`[pool] closing idle session for ${session.accountId}`)
         session.context.close().catch(() => {})
         session.browser.close().catch(() => {})
@@ -46,6 +47,32 @@ function startIdleReaper() {
 }
 
 async function createSession(accountId: string, proxyUrl: string | null, sessionData: Record<string, unknown> | null): Promise<PooledSession> {
+  let resolvedProxyUrl = proxyUrl
+  let resolvedSessionData = sessionData
+
+  if (!resolvedSessionData) {
+    const { data: account } = await supabase
+      .from('tiktok_accounts')
+      .select('session_data, proxy_id')
+      .eq('id', accountId)
+      .single()
+
+    if (account) {
+      resolvedSessionData = account.session_data as any
+      if (account.proxy_id && !resolvedProxyUrl) {
+        const { data: proxy } = await supabase
+          .from('proxies')
+          .select('*')
+          .eq('id', account.proxy_id)
+          .single()
+        if (proxy) {
+          const auth = proxy.username ? `${proxy.username}:${proxy.password || ''}@` : ''
+          resolvedProxyUrl = `http://${auth}${proxy.host}:${proxy.port}`
+        }
+      }
+    }
+  }
+
   const fp = generateFingerprint(accountId)
 
   const launchOptions: Record<string, unknown> = {
@@ -57,8 +84,8 @@ async function createSession(accountId: string, proxyUrl: string | null, session
     ],
   }
 
-  if (proxyUrl) {
-    const url = new URL(proxyUrl)
+  if (resolvedProxyUrl) {
+    const url = new URL(resolvedProxyUrl)
     launchOptions.proxy = {
       server: `${url.protocol}//${url.hostname}:${url.port}`,
       username: url.username || undefined,
@@ -77,8 +104,8 @@ async function createSession(accountId: string, proxyUrl: string | null, session
     bypassCSP: true,
   }
 
-  if (sessionData?.cookies) {
-    contextOptions.storageState = sessionData as unknown
+  if (resolvedSessionData?.cookies) {
+    contextOptions.storageState = resolvedSessionData as unknown
   }
 
   const context = await browser.newContext(contextOptions)

@@ -165,9 +165,15 @@ export async function listLeads(filters: LeadFilters): Promise<PaginatedResult<L
     query = query.overlaps('tags', filters.tags)
   }
   if (filters.account_id !== undefined) {
-    query = filters.account_id === null
-      ? query.is('account_id', null)
-      : query.eq('account_id', filters.account_id)
+    const isValidUuid = filters.account_id === null ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.account_id)
+    if (isValidUuid) {
+      query = filters.account_id === null
+        ? query.is('account_id', null)
+        : query.eq('account_id', filters.account_id)
+    } else {
+      console.warn(`[leads] ignoring non-UUID account_id filter: "${filters.account_id}"`)
+    }
   }
   if (filters.search) {
     query = query.ilike('username', `%${filters.search}%`)

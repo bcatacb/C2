@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { get, post, put, del } from '../lib/api'
+import { get, post, del } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn } from '../lib/utils'
 import {
@@ -33,7 +33,7 @@ interface Campaign {
     status?: string
     tags?: string[]
   }
-  account_ids: string[]
+  assigned_account_ids: string[]
   daily_send_limit: number
   total_leads: number
   replied_count: number
@@ -41,12 +41,13 @@ interface Campaign {
 }
 
 interface CampaignStats {
+  total_leads: number
   pending: number
   contacted: number
   replied: number
   converted: number
   skipped: number
-  per_step: { step_number: number; sent: number; replied: number; skipped: number }[]
+  by_step: { step_number: number; sent: number; pending: number }[]
 }
 
 interface CampaignWithStats extends Campaign {
@@ -172,7 +173,7 @@ export function Campaigns() {
         status: formFilterStatus || undefined,
         tags: formFilterTags ? formFilterTags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
       },
-      account_ids: formAccountIds,
+      assigned_account_ids: formAccountIds,
       daily_send_limit: formDailyLimit,
     }
     try {
@@ -279,8 +280,8 @@ export function Campaigns() {
                 </span>
               </div>
               <div className="mt-1 flex gap-3 text-xs text-zinc-400">
-                <span>{c.total_leads} leads</span>
-                <span>{c.replied_count} replied</span>
+                <span>{(c.total_leads ?? 0)} leads</span>
+                <span>{(c.replied_count ?? 0)} replied</span>
               </div>
             </div>
           ))}
@@ -590,15 +591,15 @@ function DetailView({ detail, accounts, onActivate, onPause, onResume, onDelete 
 
       {/* Stats Cards */}
       <div className="grid grid-cols-5 gap-3 mb-6">
-        <StatCard label="Pending" value={detail.stats.pending} color="text-zinc-300" />
-        <StatCard label="Contacted" value={detail.stats.contacted} color="text-purple-400" />
-        <StatCard label="Replied" value={detail.stats.replied} color="text-green-400" />
-        <StatCard label="Converted" value={detail.stats.converted} color="text-emerald-400" />
-        <StatCard label="Skipped" value={detail.stats.skipped} color="text-yellow-400" />
+        <StatCard label="Total" value={detail.stats?.total_leads ?? 0} color="text-zinc-300" />
+        <StatCard label="Contacted" value={detail.stats?.contacted ?? 0} color="text-purple-400" />
+        <StatCard label="Replied" value={detail.stats?.replied ?? 0} color="text-green-400" />
+        <StatCard label="Converted" value={detail.stats?.converted ?? 0} color="text-emerald-400" />
+        <StatCard label="Skipped" value={detail.stats?.skipped ?? 0} color="text-yellow-400" />
       </div>
 
       {/* Per-step breakdown */}
-      {detail.stats.per_step.length > 0 && (
+      {(detail.stats?.by_step?.length ?? 0) > 0 && (
         <div className="mb-6">
           <h3 className="text-sm font-medium text-zinc-300 mb-2">Per-Step Breakdown</h3>
           <table className="w-full text-sm">
@@ -606,17 +607,15 @@ function DetailView({ detail, accounts, onActivate, onPause, onResume, onDelete 
               <tr className="text-left text-xs text-zinc-400 border-b border-zinc-800">
                 <th className="py-2 pr-4">Step</th>
                 <th className="py-2 pr-4">Sent</th>
-                <th className="py-2 pr-4">Replied</th>
-                <th className="py-2">Skipped</th>
+                <th className="py-2">Pending</th>
               </tr>
             </thead>
             <tbody>
-              {detail.stats.per_step.map((s) => (
+              {detail.stats.by_step.map((s) => (
                 <tr key={s.step_number} className="border-b border-zinc-800/50">
                   <td className="py-2 pr-4 text-zinc-300">Step {s.step_number}</td>
                   <td className="py-2 pr-4 text-zinc-400">{s.sent}</td>
-                  <td className="py-2 pr-4 text-green-400">{s.replied}</td>
-                  <td className="py-2 text-yellow-400">{s.skipped}</td>
+                  <td className="py-2 text-yellow-400">{s.pending}</td>
                 </tr>
               ))}
             </tbody>
@@ -635,16 +634,16 @@ function DetailView({ detail, accounts, onActivate, onPause, onResume, onDelete 
           <div className="flex gap-2">
             <span className="text-zinc-500">Accounts:</span>
             <span className="text-zinc-300">
-              {detail.account_ids.length > 0
-                ? detail.account_ids.map((id) => `@${accounts.find((a) => a.id === id)?.username || 'unknown'}`).join(', ')
-                : 'None'}
+              {(detail.assigned_account_ids?.length ?? 0) > 0
+                ? (detail.assigned_account_ids || []).map((id) => `@${accounts.find((a) => a.id === id)?.username || 'unknown'}`).join(', ')
+                : 'None assigned'}
             </span>
           </div>
           <div className="flex gap-2">
             <span className="text-zinc-500">Target filters:</span>
             <span className="text-zinc-300">
-              {detail.target_filters.status || 'any status'}
-              {detail.target_filters.tags?.length ? `, tags: ${detail.target_filters.tags.join(', ')}` : ''}
+              {(detail.target_filters || {}).status || 'any status'}
+              {(detail.target_filters || {}).tags?.length ? `, tags: ${(detail.target_filters || {}).tags?.join(', ')}` : ''}
             </span>
           </div>
         </div>
@@ -652,9 +651,9 @@ function DetailView({ detail, accounts, onActivate, onPause, onResume, onDelete 
 
       {/* Steps */}
       <div>
-        <h3 className="text-sm font-medium text-zinc-300 mb-2">Steps ({detail.steps.length})</h3>
+        <h3 className="text-sm font-medium text-zinc-300 mb-2">Steps ({(detail.steps || []).length})</h3>
         <div className="space-y-2">
-          {detail.steps.map((step) => (
+          {(detail.steps || []).map((step) => (
             <div key={step.step_number} className="rounded border border-zinc-800 bg-zinc-800/30 p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium text-zinc-400">Step {step.step_number}</span>

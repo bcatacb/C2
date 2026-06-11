@@ -161,7 +161,8 @@ export function matchesTrigger(trigger: AutomationTrigger, context: InboundMessa
       return (trigger.keywords || []).some(kw => messageLower.includes(kw.toLowerCase()))
     }
     case 'any_message':
-      return context.is_new_sender
+      // Fire on any conversation that has an unread inbound message
+      return context.message_text.length > 0
     case 'first_reply':
       return context.is_first_campaign_reply
     default:
