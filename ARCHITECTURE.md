@@ -38,10 +38,13 @@ React Frontend (port 5173)
 Express Backend (port 4000)
   |
   |-- Account Manager ---- CRUD, health checks, cooldown tracking
-  |-- Inbox Aggregator --- background sync ticker, message upsert
-  |-- Message Sender ----- send via transport, enforce daily limits
+  |-- Inbox Aggregator --- background sync ticker, message upsert, read/reply state sync
+  |-- Campaign Worker ---- automated outreach campaigns, drip sequences
+  |-- Lead List Service -- CRUD lists/folders, member mapping, lead engine filtering
+  |-- Message Sender ----- send via transport, enforce daily limits, spin-tax template renderer
+  |-- Automation Engine -- keyword trigger evaluations, auto-replies
   |-- Transport Orchestrator
-  |     |-- Playwright Transport (active)
+  |     |-- Playwright Transport (active: sending, sync, profile follower scraper)
   |     |-- API Transport (stub)
   |     '-- Session Pool Manager
   |
@@ -202,14 +205,43 @@ All configuration is via environment variables (see `.env.example`):
 
 ---
 
+## Completed Phase 2 - 5 Features Architecture
+
+The system has been updated from a pure messaging orchestrator to a complete campaign and CRM system. The following modules have been integrated:
+
+### 1. Scraper & Lead Engine (Profile Crawler)
+- **Playwright Crawler**: Implemented directly in [playwright.ts](file:///c:/Users/ogt/c2/C2/server/transport/playwright.ts). It logs into TikTok, navigates to target profiles, opens the followers modal, scrolls down to load up to the specified limit, and filters out mutual followers (friends).
+- **Background Scrape Endpoint**: The endpoint `POST /api/accounts/:id/scrape-followers` receives crawler instructions, imports the TikTok usernames as Leads (flagged as `scraped_follower` or `mutual_follower`), and optionally registers them into a specific Lead List.
+
+### 2. CRM Folders & Lists
+- **Relational Mapping Schema**: Added `lead_lists` and `lead_list_members` tables to support multi-list lead enrollment.
+- **Service Layer & API**: Created [lead-list-service.ts](file:///c:/Users/ogt/c2/C2/server/services/lead-list-service.ts) to manage CRUD list operations, list assignments, and membership lookup.
+- **UI Workspace Sidebar**: Added a left-hand folders sidebar on the Leads page to organize contacts on the fly. Users can select leads and trigger bulk addition or removal from custom lists.
+- **Unibox Integration**: Added a Folder button in the Unibox thread view so that active conversation threads can be enrolled into custom CRM folders instantly.
+
+### 3. Campaigns & Auto-Rotating Sender Accounts
+- **Load-Balanced Account Rotation**: Campaigns can run without a hardcoded sending account. The [campaign-worker.ts](file:///c:/Users/ogt/c2/C2/server/services/campaign-worker.ts) automatically distributes outreach steps across all connected profiles.
+- **Rotator Algorithm**: Before picking an account, active accounts are sorted ascending by their `dms_sent_today` count, ensuring load is balanced equally.
+- **Daily DM Limits**: Accounts have strict daily limits. Visual progress indicators (color-coded progress bars) on the Accounts page show the percentage of limits reached (orange warning at 80%, red warning at 100%).
+
+### 4. Unread/Read/Replied Status Transitions
+- **State Engine**: Conversation rows maintain a `status` string representing state transitions:
+  - Synchronizing new messages transitions status to `'unread'`.
+  - Manual/campaign outbound replies transition status to `'replied'`.
+  - Opening a conversation in the Unibox transitions status to `'read'`.
+- **Inbox UI Tabs**: Segmented tabs (`All`, `Unread`, `Replied`) filter conversations locally based on these states.
+
+### 5. Warm-up Starter Pools & Spin-tax Templates
+- **Template Personalization**: The template engine supports recursive spin-tax patterns `{phrase1|phrase2|phrase3}` to randomize cold outreach text.
+- **Warm-up Icebreakers**: Auto-sends lightweight starter messages (like waves/handshakes) to build trust scores.
+
+---
+
 ## Future Phases
 
-This is Phase 1. The architecture supports these planned additions as toggleable modules:
+The architecture supports the following planned future additions:
 
 | Phase | Module | Description |
 |-------|--------|-------------|
-| 2 | Lead Engine | Scrape targets from TikTok (followers, commenters, hashtags) + CSV import |
-| 3 | Campaign Engine | Outreach queue, templates, personalization, drip sequences |
-| 4 | CRM Module | Tags, pipeline stages, team assignments, conversation notes |
-| 5 | Automation Module | Auto-replies, keyword triggers, conversation routing rules |
 | 6 | WhatsApp Integration | Bridge to existing WhatsApp Account Manager for cross-platform messaging |
+

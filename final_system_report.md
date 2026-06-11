@@ -115,3 +115,38 @@ C2's frontend can now be hosted entirely as a static webpage on Vercel, Netlify,
 
 > [!WARNING]
 > Storing session cookies exposes active access. Ensure that your remote server's port (default `4000`) is secured (e.g., behind a firewall, VPN, or reverse proxy with authentication) to prevent unauthorized API requests.
+
+---
+
+## 6. Phase 2 Features Expansion & Integration
+
+Phase 2 was executed to expand TokTik C2 from a raw messaging proxy into an automated campaign, scraping, and lead management CRM system. The following highlights the operational design of the newly integrated modules:
+
+### 📥 TikTok Followers Crawler & Profile Scraper
+- **Playwright Profile Scraper**: Implemented inside `playwright.ts`. It navigates to the account profile page, opens the followers modal list, scrolls dynamically to crawl up to a user-defined limit, and detects whether each follower is a mutual friend (follow-back).
+- **Background Import pipeline**: A target API `POST /api/accounts/:id/scrape-followers` receives the list size request, runs the scraper in the browser pool, maps target profiles to the `leads` table with tags (`scraped_follower` and `mutual_follower`), and optionally registers them into a specific Lead List.
+- **UI Control**: A scraper button is added to each account card on the Accounts page, prompting limits and list selection via a modal.
+
+### 📂 CRM Lists, Folders & Workspace Organization
+- **Database Schema**: Created `lead_lists` and `lead_list_members` tables. This setup decouples leads from campaigns, allowing a single lead to exist across multiple lists/folders.
+- **Filtering & CRUD Services**: [lead-list-service.ts](file:///c:/Users/ogt/c2/C2/server/services/lead-list-service.ts) manages CRUD folder actions, list membership additions/deletions, and counts of leads inside each folder.
+- **Leads Workspace Sidebar**: Integrates a clean left sidebar detailing custom folders with badge counts. Users can perform bulk "Add to Folder" or "Remove from Folder" actions from the leads table.
+- **Unibox Contact Tagging**: Added a folder assignment icon inside the chat header of the Unibox thread view. This allows operators to quickly categorize a contact list membership without navigating away from the chat conversation.
+
+### 🔄 Outreach Campaigns & Auto-Rotating Sender Accounts
+- **Campaign Worker Scheduling**: Enrolled leads are scheduled in sequence. The background [campaign-worker.ts](file:///c:/Users/ogt/c2/C2/server/services/campaign-worker.ts) executes outreach drips periodically.
+- **Load-Balanced Rotation**: If a campaign doesn't specify a single sending account, the worker will dynamically rotate outbound messages across all connected profiles.
+- **Rotation Sorting**: Accounts are sorted by their daily message sent count (`dms_sent_today ASC`), ensuring load is distributed to the least active accounts first.
+- **Daily DM Progress indicators**: The Accounts tab renders inline progress bars showing daily DM counts against limits (with color-coded warnings at 80% and red at 100%).
+
+### 📨 Inbox Status Segments & State Transitions
+- **Auto-State Engine**: The conversation `status` column maintains transitions:
+  - Synchronizing new inbound DMs updates status to `'unread'`.
+  - Sending automated campaign or manual replies updates status to `'replied'`.
+  - Viewing a thread in the Unibox resets unread count and updates status to `'read'`.
+- **Inbox UI Segmented Tabs**: Added tabs for `All`, `Unread`, and `Replied` in the Unibox thread selector list to allow operators to filter active workloads instantly.
+
+### 📝 Template Personalization & Spin-tax Randomization
+- **Spin-tax Parsing**: The rendering service supports curly brace groups (`{A|B|C}`) and parses them recursively to output randomized string variations, avoiding repetitive messages that trigger spam flags.
+- **Warm-up Starter Pools**: Supports icebreaker templates (e.g. waves or handshakes) to build trust score history with TikTok accounts.
+

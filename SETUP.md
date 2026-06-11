@@ -14,99 +14,20 @@
 2. Click **New Project** — name it `toktik-c2`, set a database password, pick a region
 3. Wait for provisioning (~2 minutes)
 4. Go to **SQL Editor** in the left sidebar
-5. Click **New Query**, paste the first migration below, and click **Run**:
+5. Click **New Query** and execute all migration scripts found in the [server/migrations/](file:///c:/Users/ogt/c2/C2/server/migrations/) directory in sequential order:
+   * **`001_accounts_proxies.sql`**: Configures proxies and TikTok account tables with health status and daily limits.
+   * **`002_conversations_messages.sql`**: Configures conversations and messages tables with indexes.
+   * **`003_leads.sql`**: Configures the leads table for CRM targeting.
+   * **`004_campaigns.sql`**: Configures campaigns, steps, templates, and campaign lead records.
+   * **`005_crm_pipeline.sql`**: Configures CRM pipeline stages and lead status transitions.
+   * **`006_sync_enabled.sql`**: Adds a sync enabled flag to TikTok accounts.
+   * **`007_automation.sql`**: Configures incoming keyword trigger automation rules.
+   * **`008_features_expansion.sql`**: Configures lead folders/lists, member mapping, and inbox conversation filters.
 
-```sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-CREATE TABLE proxies (
-  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id             uuid,
-  type                text CHECK (type IN ('residential', 'mobile', 'datacenter')),
-  host                text NOT NULL,
-  port                int NOT NULL,
-  username            text,
-  password            text,
-  country             text,
-  assigned_account_id uuid,
-  status              text DEFAULT 'active' CHECK (status IN ('active', 'dead', 'rotating')),
-  last_checked        timestamptz,
-  created_at          timestamptz DEFAULT now()
-);
-
-CREATE TABLE tiktok_accounts (
-  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id             uuid,
-  username            text NOT NULL,
-  display_name        text,
-  profile_photo       text,
-  transport_type      text DEFAULT 'playwright' CHECK (transport_type IN ('playwright', 'api')),
-  status              text DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'restricted', 'banned')),
-  proxy_id            uuid REFERENCES proxies(id) ON DELETE SET NULL,
-  session_data        jsonb,
-  daily_dm_limit      int DEFAULT 50,
-  dms_sent_today      int DEFAULT 0,
-  dms_sent_reset      timestamptz,
-  cooldown_until      timestamptz,
-  cooldown_step       int DEFAULT 0,
-  last_health_check   timestamptz,
-  last_inbox_sync     timestamptz,
-  created_at          timestamptz DEFAULT now()
-);
-
-ALTER TABLE proxies
-  ADD CONSTRAINT fk_proxy_assigned_account
-  FOREIGN KEY (assigned_account_id)
-  REFERENCES tiktok_accounts(id) ON DELETE SET NULL;
-
-CREATE INDEX idx_accounts_user ON tiktok_accounts(user_id);
-CREATE INDEX idx_accounts_status ON tiktok_accounts(user_id, status);
-CREATE INDEX idx_proxies_user ON proxies(user_id);
-```
-
-6. Click **New Query** again, paste the second migration, and click **Run**:
-
-```sql
-CREATE TABLE conversations (
-  id                      uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  account_id              uuid NOT NULL REFERENCES tiktok_accounts(id) ON DELETE CASCADE,
-  peer_username           text NOT NULL,
-  peer_display_name       text,
-  peer_avatar             text,
-  last_message_text       text,
-  last_message_at         timestamptz,
-  last_message_direction  text CHECK (last_message_direction IN ('inbound', 'outbound')),
-  unread_count            int DEFAULT 0,
-  archived                boolean DEFAULT false,
-  labels                  text[] DEFAULT '{}',
-  created_at              timestamptz DEFAULT now(),
-  UNIQUE(account_id, peer_username)
-);
-
-CREATE TABLE messages (
-  id                uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  conversation_id   uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  account_id        uuid NOT NULL REFERENCES tiktok_accounts(id) ON DELETE CASCADE,
-  direction         text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
-  body              text,
-  media_url         text,
-  tiktok_msg_id     text,
-  status            text DEFAULT 'delivered' CHECK (status IN ('delivered', 'failed', 'pending')),
-  sent_at           timestamptz NOT NULL,
-  created_at        timestamptz DEFAULT now(),
-  UNIQUE(account_id, tiktok_msg_id)
-);
-
-CREATE INDEX idx_conversations_account ON conversations(account_id);
-CREATE INDEX idx_conversations_last_msg ON conversations(last_message_at DESC);
-CREATE INDEX idx_conversations_unread ON conversations(account_id) WHERE unread_count > 0;
-CREATE INDEX idx_messages_conversation ON messages(conversation_id, sent_at DESC);
-CREATE INDEX idx_messages_account ON messages(account_id);
-```
-
-Both should return "Success. No rows returned." You should see 4 tables in the **Table Editor**.
+Make sure to run these migrations in order. All tables and constraints should be created.
 
 ---
+
 
 ## Step 2: Get Your Supabase Credentials
 
@@ -158,6 +79,7 @@ echo SUPABASE_URL=https://YOUR-PROJECT-ID.supabase.co> .env
 echo SUPABASE_KEY=your-service-role-key-here>> .env
 echo PORT=4000>> .env
 echo ENABLE_INBOX_SYNC=false>> .env
+echo ENABLE_CAMPAIGN_WORKER=true>> .env
 echo DEFAULT_USER=admin>> .env
 echo DEFAULT_PASS=admin>> .env
 ```
@@ -185,8 +107,10 @@ Then edit `.env` with your Supabase credentials.
 | `INBOX_SYNC_INTERVAL_MS` | 30000 | Background sync every 30s |
 | `HEADED_MODE` | false | Set to true to see browser windows (debugging) |
 | `ENABLE_INBOX_SYNC` | false | Set to true to start syncing DMs on boot |
+| `ENABLE_CAMPAIGN_WORKER` | false | Set to true to enable automated campaign workers on boot |
 | `DEFAULT_USER` | admin | Login username |
 | `DEFAULT_PASS` | admin | Login password |
+
 
 ---
 

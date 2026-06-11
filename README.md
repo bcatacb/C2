@@ -1,6 +1,6 @@
-# TokTik C2 — Unified Messaging Orchestrator
+# TokTik C2 — Unified Messaging, Campaigns & CRM Orchestrator
 
-Unified inbox for managing DMs across multiple TikTok profiles. Phase 1 uses Playwright browser automation as the transport layer (TikTok Business Messaging API is unavailable for US accounts).
+Unified inbox, CRM, and automated campaign manager for managing DMs across multiple TikTok profiles. Uses Playwright browser automation as the transport layer (TikTok Business Messaging API is unavailable for US accounts) combined with automated account rotation, lead scraper crawler, folders, and keyword auto-replies.
 
 ## Quick Start
 
@@ -24,10 +24,16 @@ cp server/.env.example server/.env
 
 ### 3. Run database migrations
 
-Execute the SQL files in `server/migrations/` against your Supabase project in order:
+Execute all SQL files inside [server/migrations/](file:///c:/Users/ogt/c2/C2/server/migrations/) in sequential order (from `001` to `008`) against your Supabase SQL editor:
 - `001_accounts_proxies.sql`
 - `002_conversations_messages.sql`
-- `003_indexes.sql`
+- `003_leads.sql`
+- `004_campaigns.sql`
+- `005_crm_pipeline.sql`
+- `006_sync_enabled.sql`
+- `007_automation.sql`
+- `008_features_expansion.sql`
+
 
 ### 4. Start the servers
 
@@ -79,12 +85,16 @@ React Frontend (Vite + Tailwind)
   ↕ REST + WebSocket (proxied via Vite)
 Express Backend (TypeScript)
   ├── Account Manager (CRUD, health, cooldown)
-  ├── Inbox Sync (30s ticker, conversation list scraping)
+  ├── Inbox Sync (30s ticker, conversation list and status scraping)
+  ├── Campaign Worker (automated outreach, round-robin rotating accounts)
+  ├── Automation Engine (keyword trigger evaluations, auto-replies)
+  ├── Lead List Service (folders and membership mapping)
   └── Transport Layer (pluggable)
        └── Playwright Transport
             ├── Session Pool (max 5 browsers, mutex locking)
             ├── Cookie Banner Dismissal
-            └── TikTok Business Suite iframe targeting
+            ├── TikTok Business Suite iframe targeting
+            └── Follower and Follow-back profile crawler scraper
   ↕
 Supabase (PostgreSQL)
 ```
@@ -92,7 +102,7 @@ Supabase (PostgreSQL)
 ### Sync Flow
 - Every 30s, the sync ticker rotates through connected accounts
 - For each account: acquires a Playwright session, navigates to TikTok DMs, finds the Business Suite iframe, scrapes the conversation list
-- Conversations are upserted to the database with display names, avatars, last message preview, and unread counts
+- Conversations are upserted to the database with display names, avatars, last message preview, unread counts, and status (unread/read/replied)
 - Messages are fetched **on-demand** when you click a conversation in the inbox (not during automated sync — too fragile with TikTok's iframe lifecycle)
 
 ### Key Technical Details
@@ -100,6 +110,7 @@ Supabase (PostgreSQL)
 - A `tiktok-cookie-banner` web component overlays the page and blocks all clicks — it's removed from the DOM before any interaction
 - Session pool uses per-session mutex locking to prevent sync and on-demand fetch from using the same browser simultaneously
 - Sessions are pinned during manual login to prevent the idle reaper from closing the browser during 2FA
+- Message outreach template supports spin-tax curly braces `{phrase1|phrase2}` patterns to avoid TikTok spam detection filters.
 
 ## Environment Variables
 
@@ -113,6 +124,7 @@ Supabase (PostgreSQL)
 | `INBOX_SYNC_INTERVAL_MS` | `30000` | Sync ticker interval |
 | `HEADED_MODE` | `false` | Set `true` if you have a display server |
 | `ENABLE_INBOX_SYNC` | `true` | Set `false` to disable auto-sync |
+| `ENABLE_CAMPAIGN_WORKER` | `true` | Set `false` to disable auto campaign outreach |
 | `DEFAULT_USER` | `admin` | Login username |
 | `DEFAULT_PASS` | `admin` | Login password |
 
@@ -121,7 +133,7 @@ Supabase (PostgreSQL)
 ```
 frontend/          React + Vite + Tailwind
   src/
-    pages/         Accounts, Unibox (inbox), Settings, Login
+    pages/         Accounts, Unibox (inbox), Settings, Login, Leads (folders/sidebar), Campaigns, Pipelines, Automations
     components/    AppLayout, Sidebar, RequireAuth
     lib/           api.ts (auth-aware fetch), ws.ts, utils.ts
 
@@ -129,14 +141,20 @@ server/            Express + TypeScript
   index.ts         Routes, WebSocket, auth
   transport/
     interface.ts   Pluggable transport interface
-    playwright.ts  Playwright transport (iframe targeting, cookie banner, message scraping)
+    playwright.ts  Playwright transport (iframe, message scraping, follower scraper crawler)
     session-pool.ts Session pool with mutex locking
     api.ts         TikTok API transport stub (future)
   services/
-    inbox-sync.ts  Background sync ticker
-    account-manager.ts  Account CRUD
+    inbox-sync.ts  Background sync ticker and unread/read tracker
+    account-manager.ts  Account CRUD and limit resets
     message-sender.ts   Send messages via transport
     proxy-manager.ts    Proxy CRUD + assignment
+    campaign-service.ts Campaign management
+    campaign-worker.ts  Outreach crawler agent scheduler (load-balanced rotating accounts)
+    lead-service.ts     CRM lead matching and filtering
+    lead-list-service.ts Lead CRM folder/list categorization
+    template-renderer.ts Spin-tax parser and warm-up starter selector
+    automation-service.ts Keyword triggers auto-responder
   utils/
     fingerprint.ts  Browser fingerprint randomization
     cooldown.ts     Exponential backoff
