@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { get, post, put } from '../lib/api'
 import { connectWs, onWsMessage, disconnectWs } from '../lib/ws'
 import { cn, timeAgo } from '../lib/utils'
-import { Send, Archive, ArchiveRestore, Check, ChevronDown, ChevronRight, X, Download, Folder } from 'lucide-react'
+import { Send, Archive, ArchiveRestore, Check, ChevronDown, ChevronRight, X, Download, Folder, RefreshCw } from 'lucide-react'
 
 interface TikTokAccount {
   id: string
@@ -162,6 +162,22 @@ export function Unibox() {
       setConversations((prev) =>
         prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0, status: 'read' } : c))
       )
+    }
+  }
+
+  async function refreshConversation() {
+    if (!selectedConvId || fetchingMessages) return
+    setFetchingMessages(true)
+    try {
+      // Force a live re-scrape, then reload the full thread from the DB.
+      await post<Message[]>(`/conversations/${selectedConvId}/fetch-messages`, {})
+      const fresh = await get<Message[]>(`/messages?conversation_id=${selectedConvId}`)
+      setMessages(fresh)
+      loadConversations()
+    } catch {
+      /* ignore — keep current messages on failure */
+    } finally {
+      setFetchingMessages(false)
     }
   }
 
@@ -485,6 +501,14 @@ export function Unibox() {
                 )}
               </div>
               <div className="flex gap-1.5 items-center">
+                <button
+                  onClick={refreshConversation}
+                  disabled={fetchingMessages}
+                  className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white disabled:opacity-50"
+                  title="Refresh this conversation"
+                >
+                  <RefreshCw size={16} className={cn(fetchingMessages && 'animate-spin')} />
+                </button>
                 <button
                   onClick={handleAddConvToFolder}
                   className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"

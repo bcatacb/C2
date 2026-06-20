@@ -252,6 +252,7 @@ async function syncAccount(account: TikTokAccount): Promise<void> {
     await updateAccount(account.id, {
       last_inbox_sync: new Date().toISOString(),
       last_health_check: new Date().toISOString(),
+      cooldown_step: 0,
     } as Partial<TikTokAccount>)
 
   } catch (err) {
@@ -268,7 +269,14 @@ async function syncAccount(account: TikTokAccount): Promise<void> {
     }
 
     if (message.includes('login') || message.includes('session') || message.includes('not logged in')) {
-      await updateAccount(account.id, { status: 'disconnected', session_data: null } as Partial<TikTokAccount>)
+      // Keep session_data — the login check can false-negative on slow page
+      // loads, and a kept session self-heals on a later tick. Space retries
+      // 10 minutes apart without stepping the rate-limit backoff (6h+ would
+      // be excessive for a transient detection miss).
+      await updateAccount(account.id, {
+        status: 'disconnected',
+        cooldown_until: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      } as Partial<TikTokAccount>)
     }
   }
 }

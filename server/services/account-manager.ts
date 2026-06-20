@@ -36,11 +36,14 @@ export async function getAccount(id: string): Promise<TikTokAccount | null> {
 }
 
 export async function createAccount(
-  fields: Pick<TikTokAccount, 'username'> & Partial<TikTokAccount>
+  fields: Partial<TikTokAccount>
 ): Promise<TikTokAccount> {
+  // username is NOT NULL but we no longer ask for it up front — the real @handle is
+  // backfilled from the logged-in session, so seed a placeholder until then.
+  const username = fields.username?.trim() || `pending-${Math.random().toString(16).slice(2, 8)}`
   const { data, error } = await supabase
     .from('tiktok_accounts')
-    .insert(fields)
+    .insert({ ...fields, username })
     .select()
     .single()
   if (error) throw new Error(error.message)

@@ -151,6 +151,26 @@ app.post('/api/accounts/:id/connect', asyncH(async (req, res) => {
   res.json({ ok: true, message: 'Browser opened — log in to TikTok manually, then click Save Session in the UI' })
 }))
 
+// ── Account Connect via QR (headless — scan with TikTok app) ─
+app.post('/api/accounts/:id/connect-qr', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const account = await getAccount(id)
+  if (!account) { res.status(404).json({ error: 'Account not found' }); return }
+
+  const proxyUrl = account.proxy_id ? await getProxyUrl(account.proxy_id) : null
+  const { startQrLogin } = await import('./transport/qr-login.js')
+  await startQrLogin(id, proxyUrl, account.session_data)
+
+  res.json({ ok: true, message: 'QR login started — scan the code with the TikTok app' })
+}))
+
+app.post('/api/accounts/:id/cancel-qr', asyncH(async (req, res) => {
+  const id = req.params.id as string
+  const { stopQrLogin } = await import('./transport/qr-login.js')
+  await stopQrLogin(id)
+  res.json({ ok: true })
+}))
+
 app.get('/api/accounts/:id/debug-page', asyncH(async (req, res) => {
   const id = req.params.id as string
   const session = getSession(id)
@@ -173,10 +193,25 @@ app.get('/api/accounts/:id/debug-page', asyncH(async (req, res) => {
 
 app.post('/api/accounts/:id/save-session', asyncH(async (req, res) => {
   const id = req.params.id as string
+
+  // Read the logged-in handle/avatar from the live page before we destroy the session.
+  let profile: { username: string | null; displayName: string | null; photo: string | null } = { username: null, displayName: null, photo: null }
+  const live = getSession(id)
+  const page = live?.context.pages()[0]
+  if (page) {
+    const { readOwnProfile } = await import('./transport/playwright.js')
+    profile = await readOwnProfile(page)
+  }
+
   const sessionData = await destroySession(id)
   if (!sessionData) { res.status(400).json({ error: 'No active browser session for this account' }); return }
 
-  await updateAccount(id, { session_data: sessionData, status: 'connected' })
+  const fields: Record<string, unknown> = { session_data: sessionData, status: 'connected' }
+  if (profile.username) fields.username = profile.username
+  if (profile.displayName) fields.display_name = profile.displayName
+  if (profile.photo) fields.profile_photo = profile.photo
+  await updateAccount(id, fields)
+
   const account = await getAccount(id)
   broadcast('account:updated', account)
   res.json({ ok: true, message: 'Session cookies saved. Account is now connected.' })
@@ -740,7 +775,7 @@ app.get('/api/messages', asyncH(async (req, res) => {
     .select('*')
     .eq('conversation_id', conversationId)
     .order('sent_at', { ascending: true })
-    .limit(200)
+    .limit(1000)
   if (error) throw new Error(error.message)
   res.json(data)
 }))

@@ -1,4 +1,5 @@
 import type { Frame, Page } from 'playwright'
+import { createHash } from 'crypto'
 import type { TikTokTransport, ConversationData, MessageData, AccountStatus } from './interface.js'
 import { acquireSession, destroySession, releaseSession } from './session-pool.js'
 import { randomDelay } from '../utils/fingerprint.js'
@@ -14,7 +15,7 @@ async function getPage(accountId: string, proxyUrl: string | null, sessionData: 
   return session.context.newPage()
 }
 
-async function dismissCookieBanner(page: Page): Promise<void> {
+export async function dismissCookieBanner(page: Page): Promise<void> {
   await page.evaluate(() => {
     const banner = document.querySelector('tiktok-cookie-banner')
     if (banner) banner.remove()
@@ -27,6 +28,53 @@ async function dismissCookieBanner(page: Page): Promise<void> {
       const banner = document.querySelector('tiktok-cookie-banner')
       if (banner) banner.remove()
     }).catch(() => {})
+  }
+}
+
+/**
+ * Best-effort read of the *logged-in* account's own identity from a live page.
+ * Used to backfill username/avatar after QR or manual login. Never throws —
+ * returns nulls for anything it can't find so callers can merge partial data.
+ *
+ * NOTE: selectors mirror TikTok's current markup; verify live via /debug-page if backfill fails.
+ */
+export async function readOwnProfile(page: Page): Promise<{ username: string | null; displayName: string | null; photo: string | null }> {
+  const empty = { username: null, displayName: null, photo: null }
+  try {
+    await page.goto(TIKTOK_BASE, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await randomDelay(1500, 2500)
+    await dismissCookieBanner(page)
+
+    const found = await page.evaluate(() => {
+      // The profile icon sits inside an anchor pointing at the logged-in user's profile.
+      const icon = document.querySelector('[data-e2e="profile-icon"]')
+      const anchor = (icon?.closest('a') as HTMLAnchorElement | null)
+        || (document.querySelector('a[href^="/@"]') as HTMLAnchorElement | null)
+      const href = anchor?.getAttribute('href') || ''
+      const m = href.match(/\/@([^/?#]+)/)
+      const username = m ? m[1] : null
+
+      const img = (anchor?.querySelector('img') as HTMLImageElement | null)
+        || (icon?.querySelector('img') as HTMLImageElement | null)
+      const photo = img?.getAttribute('src') || null
+
+      return { username, photo }
+    }).catch(() => ({ username: null, photo: null }))
+
+    let displayName: string | null = null
+    if (found.username) {
+      // Visit the profile page to read the display name (title block).
+      await page.goto(`${TIKTOK_BASE}/@${found.username}`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {})
+      await randomDelay(1500, 2500)
+      displayName = await page.evaluate(() => {
+        const el = document.querySelector('[data-e2e="user-subtitle"]') || document.querySelector('[data-e2e="user-title"]')
+        return el?.textContent?.trim() || null
+      }).catch(() => null)
+    }
+
+    return { username: found.username, displayName, photo: found.photo }
+  } catch {
+    return empty
   }
 }
 
@@ -73,21 +121,33 @@ export const playwrightTransport: TikTokTransport = {
   async connect(accountId, sessionData, proxyUrl) {
     const page = await getPage(accountId, proxyUrl, sessionData)
 
-    await page.goto(TIKTOK_BASE, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    await randomDelay(2000, 3000)
+    try {
+      await page.goto(TIKTOK_BASE, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await randomDelay(2000, 3000)
 
-    const isLoggedIn = await page.evaluate(() => {
-      return document.cookie.includes('sessionid') ||
-             document.querySelector('[data-e2e="profile-icon"]') !== null
-    })
+      // sessionid is HttpOnly so it never appears in document.cookie —
+      // read it through the browser context instead
+      const cookies = await page.context().cookies()
+      let isLoggedIn = cookies.some(c =>
+        (c.name === 'sessionid' || c.name === 'sessionid_ss') && c.value
+      )
 
-    if (!isLoggedIn) {
-      throw new Error(`Account ${accountId} requires manual login — not logged in or session expired`)
+      if (!isLoggedIn) {
+        isLoggedIn = await page
+          .waitForSelector('[data-e2e="profile-icon"]', { timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false)
+      }
+
+      if (!isLoggedIn) {
+        throw new Error(`Account ${accountId} requires manual login — not logged in or session expired`)
+      }
+
+      const state = await page.context().storageState()
+      return state as unknown as Record<string, unknown>
+    } finally {
+      await releaseSession(accountId)
     }
-
-    const state = await page.context().storageState()
-    await releaseSession(accountId)
-    return state as unknown as Record<string, unknown>
   },
 
   async disconnect(accountId) {
@@ -265,49 +325,27 @@ export const playwrightTransport: TikTokTransport = {
         console.log(`[fetchMessages] could not find message frame after click, using original`)
       }
 
-      const debug = await msgFrame.evaluate(() => {
-        const allEls = document.querySelectorAll('div')
-        const candidates = Array.from(allEls).filter(el => {
-          const cls = el.className?.toString() || ''
-          return cls.includes('Message') || cls.includes('message') ||
-                 cls.includes('Chat') || cls.includes('chat') ||
-                 cls.includes('Bubble') || cls.includes('bubble')
-        }).slice(0, 30)
+      // ── Scroll the virtualized thread to load full history ──────
+      // TikTok only renders the messages near the viewport, so we first scroll
+      // to the very top, then walk down extracting the rendered window each step,
+      // merging into an ordered list keyed by stable content (oldest → newest).
 
-        return {
-          candidateCount: candidates.length,
-          candidates: candidates.map(el => ({
-            cls: (el.className?.toString() || '').substring(0, 150),
-            text: (el.textContent || '').substring(0, 100),
-            children: el.children.length,
-            dataAttrs: Array.from(el.attributes).filter(a => a.name.startsWith('data-')).map(a => `${a.name}=${a.value}`).join(', '),
-          })),
-          allFrameDataE2e: Array.from(document.querySelectorAll('[data-e2e]')).map(el => el.getAttribute('data-e2e')).filter((v, i, a) => a.indexOf(v) === i),
-        }
-      }).catch(() => ({ candidateCount: 0, candidates: [] as { cls: string; text: string; children: number; dataAttrs: string }[], allFrameDataE2e: [] as string[] }))
+      type RawItem = { realId: string | null; direction: 'inbound' | 'outbound'; body: string | null; mediaUrl: string | null; rawTime: string }
 
-      console.log(`[fetchMessages] found ${debug.candidateCount} message-like elements in frame`)
-      console.log(`[fetchMessages] data-e2e in frame: ${JSON.stringify(debug.allFrameDataE2e)}`)
-      debug.candidates.slice(0, 8).forEach((c, i) => console.log(`  [${i}] class="${c.cls}" text="${c.text}" data="${c.dataAttrs}"`))
-
-      const rawMessages = await msgFrame.evaluate(() => {
-        const results: Array<{
-          tiktokMsgId: string
-          direction: 'inbound' | 'outbound'
-          body: string | null
-          mediaUrl: string | null
-          sentAt: string
-        }> = []
-
-        const chatItems = document.querySelectorAll('[data-e2e="dm-new-chat-item"]')
-
+      // Extract the currently-rendered window in DOM order (top → bottom).
+      const extract = (): Promise<RawItem[]> => msgFrame!.evaluate(() => {
+        const out: Array<{ realId: string | null; direction: 'inbound' | 'outbound'; body: string | null; mediaUrl: string | null; rawTime: string }> = []
         let lastTimestamp = ''
-        chatItems.forEach((el, idx) => {
+        document.querySelectorAll('[data-e2e="dm-new-chat-item"]').forEach((el) => {
           const wrapper = el.closest('[data-index]')
-          const msgId = wrapper?.getAttribute('data-index') || `msg_${idx}_${Date.now()}`
 
           const timeContainer = wrapper?.querySelector('[class*="TimeContainer"]')
           if (timeContainer) lastTimestamp = timeContainer.textContent?.trim() || lastTimestamp
+
+          // Prefer a real TikTok message id if one is exposed on the node/wrapper.
+          const realId = el.getAttribute('data-msg-id') || el.getAttribute('data-message-id')
+            || wrapper?.getAttribute('data-msg-id') || wrapper?.getAttribute('data-message-id')
+            || el.id || null
 
           const allClasses = (el.className?.toString() || '') + ' ' + (el.parentElement?.className?.toString() || '')
           const hasAvatar = el.querySelector('[data-e2e="chat-avatar"]') !== null
@@ -335,22 +373,67 @@ export const playwrightTransport: TikTokTransport = {
 
           if (!body && !mediaUrl) return
 
-          results.push({
-            tiktokMsgId: msgId,
-            direction: isSelf ? 'outbound' : 'inbound',
-            body: body || null,
-            mediaUrl,
-            sentAt: lastTimestamp || new Date().toISOString(),
-          })
+          out.push({ realId: realId || null, direction: isSelf ? 'outbound' : 'inbound', body: body || null, mediaUrl, rawTime: lastTimestamp })
         })
+        return out
+      }).catch(() => [] as RawItem[])
 
-        return results
-      }).catch(() => [] as Array<{ tiktokMsgId: string; direction: 'inbound' | 'outbound'; body: string | null; mediaUrl: string | null; sentAt: string }>)
+      // Scroll the message container; returns scroll metrics so Node can decide when to stop.
+      const scrollBy = (dir: 'up' | 'down'): Promise<{ scrollTop: number; scrollHeight: number; clientHeight: number }> =>
+        msgFrame!.evaluate((d) => {
+          const item = document.querySelector('[data-e2e="dm-new-chat-item"]')
+          let sc: HTMLElement | null = item ? (item.closest('[class*="scroll"], [class*="Scroll"]') as HTMLElement | null) : null
+          if (!sc && item) sc = (item.parentElement?.parentElement as HTMLElement | null) || null
+          if (sc) sc.scrollTop = d === 'up' ? Math.max(0, sc.scrollTop - Math.round(sc.clientHeight * 0.85)) : sc.scrollTop + Math.round(sc.clientHeight * 0.85)
+          return sc ? { scrollTop: sc.scrollTop, scrollHeight: sc.scrollHeight, clientHeight: sc.clientHeight } : { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }
+        }, dir).catch(() => ({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }))
 
-      return rawMessages.map((m) => ({
-        ...m,
-        sentAt: new Date(m.sentAt),
-      }))
+      // Phase 1: climb to the top of the thread.
+      const topDeadline = Date.now() + 15_000
+      while (Date.now() < topDeadline) {
+        const m = await scrollBy('up')
+        await new Promise(r => setTimeout(r, 500))
+        if (m.scrollTop <= 0) break
+      }
+
+      // Phase 2: walk down, accumulating unique messages in chronological order.
+      const stableKey = (it: RawItem): string =>
+        it.realId || createHash('sha1').update(`${peerUsername}|${it.direction}|${it.body || ''}|${it.mediaUrl || ''}`).digest('hex')
+
+      const ordered: Array<{ tiktokMsgId: string; direction: 'inbound' | 'outbound'; body: string | null; mediaUrl: string | null; rawTime: string }> = []
+      const seen = new Set<string>()
+      const merge = (items: RawItem[]) => {
+        for (const it of items) {
+          const key = stableKey(it)
+          if (seen.has(key)) continue
+          seen.add(key)
+          ordered.push({ tiktokMsgId: key, direction: it.direction, body: it.body, mediaUrl: it.mediaUrl, rawTime: it.rawTime })
+        }
+      }
+
+      const downDeadline = Date.now() + 25_000
+      while (Date.now() < downDeadline) {
+        merge(await extract())
+        const m = await scrollBy('down')
+        await new Promise(r => setTimeout(r, 500))
+        if (m.scrollTop + m.clientHeight >= m.scrollHeight - 2) {
+          merge(await extract()) // final window at the bottom
+          break
+        }
+      }
+
+      console.log(`[fetchMessages] collected ${ordered.length} messages for "${peerUsername}"`)
+
+      return ordered.map((m) => {
+        const parsed = parseRelativeDate(m.rawTime)
+        return {
+          tiktokMsgId: m.tiktokMsgId,
+          direction: m.direction,
+          body: m.body,
+          mediaUrl: m.mediaUrl,
+          sentAt: isNaN(parsed.getTime()) ? new Date() : parsed,
+        }
+      })
     } finally {
       await releaseSession(accountId)
     }
